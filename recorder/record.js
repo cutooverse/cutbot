@@ -83,6 +83,10 @@ function overlay() {
 }
 
 async function frame() {
+  if (gl.getContext("webgl2")?.isContextLost()) {      // the picture is gone (a browser short of memory): every frame would be black
+    window.__recDone = { error: "WebGL context lost: the browser probably ran out of memory" };
+    throw new Error(window.__recDone.error);
+  }
   vnow += 1000 / FPS;
   const run = waiting; waiting = [];
   for (const cb of run) cb(vnow);

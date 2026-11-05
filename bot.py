@@ -438,7 +438,8 @@ def worker():
                 tg("deleteMessage", chat_id=chat, message_id=note_id)
         except Exception as e:                  # noqa: BLE001
             log(traceback.format_exc())
-            say(chat, f"❌ {str(e)[:900]}", msg_id)
+            hint = "\n\nحافظه‌ی سرور کم آمد: اندازه‌ی ویدیو را 720 و کیفیت را سبک بگذار، یا حافظه‌ی سرور را بیشتر کن." if "out of memory" in str(e) else ""
+            say(chat, f"❌ {str(e)[:900]}{hint}", msg_id)
         finally:
             for f in files:
                 f.unlink(missing_ok=True)
