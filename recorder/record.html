@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<base href="../">
+<title>CutooVerse recorder</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;700;800;900&family=Vazirmatn:wght@500;700;900&display=swap">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "rapier": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js"
+} }
+</script>
+<style>
+  #rec { position: fixed; left: 8px; bottom: 8px; z-index: 99; max-width: 60vw; background: rgba(0,0,0,.75); color: #e8f3f2;
+         padding: 8px 10px; border-radius: 8px; font: 12px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  #preview { position: fixed; right: 8px; bottom: 8px; z-index: 99; height: 45vh; border-radius: 8px; box-shadow: 0 4px 20px #0008; }
+</style>
+</head>
+<body>
+<div id="rec">loading…</div>
+<script type="module" src="_rec/record.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<base href="../">
+<title>Cut Count options</title>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "rapier": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js"
+} }
+</script>
+</head>
+<body>
+<!-- the looks the game has right now, with their names, for the video bot: window.__options -->
+<script type="module">
+try {
+  const [{ FRUITS }, { BACKDROPS, BOARDS, THEMES }, { KNIVES }] = await Promise.all([
+    import("./src/fruits.js"), import("./src/stage.js"), import("./src/knife.js")]);
+  const names = o => Object.fromEntries(Object.entries(o).map(([id, v]) => [id, v.name || {}]));
+  window.__options = {
+    fruit: names(FRUITS), backdrop: names(BACKDROPS), board: names(BOARDS), knife: names(KNIVES),
+    theme: Object.fromEntries(Object.entries(THEMES).map(([id, th]) => [id, { name: th.name || {}, board: th.board, backdrop: th.backdrop, fruit: th.fruit || null }])),
+  };
+} catch (e) {
+  window.__options = { error: String(e) };
+}
+</script>
+</body>
+</html>

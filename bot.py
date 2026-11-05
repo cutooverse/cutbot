@@ -1,0 +1,414 @@
+"""Cut Count video bot: send it a line like `lemon burst 10,20,30` on Telegram; it records that
+video of the game in a headless Chrome and sends it back.
+
+Settings (on Railway: the service's Variables), never in this code:
+  TG_TOKEN    the bot's token from @BotFather
+  OWNER_ID    who may use it: your Telegram user id, or several, comma-separated. Left empty, the bot
+              only answers each message with the sender's id, so you can find yours.
+  GAME_REPO   the game's public GitHub repository: owner/name or its address
+
+The game is fetched again before every video, so a push to the game shows up in the next one.
+"""
+import json
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from pathlib import Path
+
+TOKEN = os.environ.get("TG_TOKEN", "").strip()
+OWNERS = {s.strip() for s in os.environ.get("OWNER_ID", "").split(",") if s.strip()}
+REPO = os.environ.get("GAME_REPO", "").strip().removesuffix("/").removesuffix(".git")
+API = os.environ.get("TG_API", "https://api.telegram.org").rstrip("/")
+HERE = Path(__file__).resolve().parent
+GAME = Path(os.environ.get("GAME_DIR", "/tmp/game"))
+VIDEOS = Path(os.environ.get("VIDEO_DIR", "/tmp/videos"))
+PORT = int(os.environ.get("REC_PORT", 8770))
+TG_LIMIT = 49 * 1024 * 1024                     # a bot may send files up to 50 MB
+CHROME = ["--disable-dev-shm-usage", "--ignore-gpu-blocklist", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+# --- Telegram ------------------------------------------------------------------------------------
+
+def tg(method, **params):
+    data = {k: json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v) for k, v in params.items() if v is not None}
+    try:
+        with urllib.request.urlopen(f"{API}/bot{TOKEN}/{method}", urllib.parse.urlencode(data).encode(), timeout=70) as r:
+            return json.load(r).get("result")
+    except urllib.error.HTTPError as e:
+        log(method, e.code, e.read()[:300])
+    except OSError as e:
+        log(method, e)
+    return None
+
+
+def tg_file(method, field, path, **params):
+    b = uuid.uuid4().hex
+    parts = [f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{json.dumps(v) if isinstance(v, bool) else v}\r\n'.encode()
+             for k, v in params.items() if v is not None]
+    parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\nContent-Type: video/mp4\r\n\r\n'.encode())
+    body = b"".join(parts) + path.read_bytes() + f"\r\n--{b}--\r\n".encode()
+    req = urllib.request.Request(f"{API}/bot{TOKEN}/{method}", body, {"Content-Type": f"multipart/form-data; boundary={b}"})
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r:
+            return json.load(r).get("result")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Telegram refused the video: {e.code} {e.read()[:300]!r}")
+
+
+def say(chat, text, reply_to=None):
+    return tg("sendMessage", chat_id=chat, text=text, reply_to_message_id=reply_to, disable_web_page_preview=True)
+
+
+# --- the game and its looks ----------------------------------------------------------------------
+
+def git(*a):
+    return subprocess.run(["git", *a], capture_output=True, text=True)
+
+
+def get_game():
+    """The game's latest version, with the recorder put in it."""
+    if (GAME / ".git").exists():                # the latest, even after a force push
+        r = git("-C", str(GAME), "fetch", "--depth", "1", "-q", "origin")
+        r = r if r.returncode else git("-C", str(GAME), "reset", "--hard", "-q", "FETCH_HEAD")
+    else:
+        url = REPO if REPO.startswith("http") else f"https://github.com/{REPO}"
+        r = git("clone", "--depth", "1", "-q", url + ".git", str(GAME))
+    if r.returncode:
+        raise RuntimeError("could not get the game: " + r.stderr.strip()[-300:])
+    (GAME / "_rec").mkdir(exist_ok=True)
+    for f in (HERE / "recorder").iterdir():
+        shutil.copy(f, GAME / "_rec" / f.name)
+    return git("-C", str(GAME), "log", "-1", "--format=%h %s").stdout.strip()
+
+
+server = None
+
+
+def ensure_server():
+    global server
+    if server and server.poll() is None:
+        return
+    env = dict(os.environ, REC_OUT=str(VIDEOS), REC_WORK=str(VIDEOS.parent / "rec_work"))
+    env.pop("TG_TOKEN", None)
+    server = subprocess.Popen([sys.executable, str(GAME / "_rec" / "rec_server.py"), str(PORT)], env=env)
+    for _ in range(50):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{PORT}/index.html", timeout=1).close()
+            return
+        except OSError:
+            time.sleep(0.2)
+    raise RuntimeError("the recorder's server did not start")
+
+
+FIXED = {                                       # looks that are not lists in the game's code
+    "style": {"burst": ["برست", "بریست", "انفجاری"], "dice": ["دایس", "مکعبی"], "free": ["آزاد"]},
+    "camera": {"front": ["روبرو", "جلو"], "top": ["بالا"], "close": ["نزدیک"]},
+    "speed": {"slow": ["آهسته", "کند"], "normal": ["معمولی"], "fast": ["تند", "سریع"]},
+    "material": {"real": ["واقعی"], "glass": ["شیشه‌ای"]},
+    "size": {"s": ["small", "کوچک"], "m": ["medium", "متوسط"], "l": ["large", "big", "بزرگ"]},
+    "quality": {"full": ["کامل"], "lite": ["سبک"]},
+    "notes": {"piano": ["پیانو"], "organ": ["ارگ"], "musicbox": ["جعبه‌موسیقی"], "marimba": ["ماریمبا"], "glass": [], "off": ["nonotes", "بی‌نت"]},
+    "cutsound": {"auto": [], "knife": [], "glass": []},
+    "edit": {"normal": [], "loop": ["seamless", "لوپ"]},
+}
+ORDER = ["fruit", "style", "camera", "speed", "knife", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit"]
+DEFAULTS = dict(fruit="orange", style="burst", camera="front", speed="normal", knife="chef", backdrop="teal", board="walnut",
+                material="real", size="m", quality="full", video="1080", notes="piano", cutsound="auto", edit="normal")
+options = {"fruit": {"orange": {"en": "Orange", "fa": "پرتقال"}}, "backdrop": {}, "board": {}, "knife": {}, "theme": {}}
+words = {}                                      # a word as typed -> (look, id)
+bycat = {}                                      # look -> {word: id}, for board=glass
+FILLER = {"cut", "cuts", "برش", "تا", "و", "با"}
+ready = threading.Event()                       # set once the game's looks are known
+
+
+def norm(s):
+    s = s.lower().replace("ي", "ی").replace("ك", "ک").replace("‌", "")
+    return s.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
+
+
+def learn(opts):
+    """The game's own lists of looks (from _rec/options.html), and every word that names one."""
+    global options, words
+    options = opts
+    w = {}
+    bycat.clear()
+    for cat in reversed(ORDER):                 # the earlier look wins a word two of them share
+        ids = FIXED.get(cat) or {i: [v.get("en", ""), v.get("fa", "")] if "en" in v else [v.get("name", {}).get("en", ""), v.get("name", {}).get("fa", "")]
+                                  for i, v in options.get(cat, {}).items()}
+        for i, names in ids.items():
+            for name in [i, *names]:
+                for word in {norm(name), norm(name).replace(" ", "")} - {""}:
+                    w[word] = (cat, i)
+                    bycat.setdefault(cat, {})[word] = i
+    words = w
+
+
+def parse(text):
+    """`lemon burst 10,20,30 top slow 720` -> the looks, the cut counts, and the words not understood."""
+    t = norm(text)
+    for name in sorted((n for n in words if " " in n), key=len, reverse=True):   # names of two words first
+        t = t.replace(name, " " + name.replace(" ", "") + " ")
+    picks, cuts, unknown = {}, [], []
+    for tok in re.split(r"[\s,،;]+", t):
+        if not tok or tok in FILLER:
+            continue
+        if "=" in tok:                          # material=glass: the look named outright
+            k, v = tok.split("=", 1)
+            if v in bycat.get(k, {}):
+                picks[k] = bycat[k][v]
+            else:
+                unknown.append(tok)
+        elif tok.isdigit():
+            n = int(tok)
+            if n in (720, 1080):
+                picks["video"] = str(n)
+            elif 1 <= n <= 100:
+                cuts.append(n)
+            else:
+                unknown.append(tok)
+        elif tok in words:
+            cat, i = words[tok]
+            picks[cat] = i
+        else:
+            unknown.append(tok)
+    o = dict(DEFAULTS)
+    th = options.get("theme", {}).get(picks.pop("theme", None) or "")
+    if th:                                      # a theme is a board, a backdrop and maybe a fruit
+        o.update({k: th[k] for k in ("board", "backdrop", "fruit") if th.get(k)})
+    o.update(picks)
+    return o, cuts[:6] or [10, 20, 30], unknown
+
+
+def name_of(cat, i):
+    v = options.get(cat, {}).get(i, {})
+    v = v.get("name", v)
+    return v.get("fa") or v.get("en") or i
+
+
+def help_text():
+    return ("یک خط بفرست، ویدیو را می‌سازم و همین‌جا می‌فرستم. مثلاً:\n\n"
+            "lemon burst 10,20,30\n"
+            "هندوانه دایس 5 15 50 top slow\n"
+            "pumpkin halloween 20 720 lite\n\n"
+            "عددهای ۱ تا ۱۰۰ = تعداد برش هر بخش (تا ۶ بخش؛ پیش‌فرض 10,20,30)\n"
+            "720 یا 1080 = اندازه‌ی ویدیو · lite = سریع‌تر و سبک‌تر · full = کامل\n"
+            "هر چه نگویی پیش‌فرض است: پرتقال، burst، front، normal\n"
+            "اگر یک کلمه دو معنی دارد، کامل بنویس: material=glass\n\n"
+            "/options فهرست میوه‌ها و ظاهرها")
+
+
+def options_text():
+    rows = []
+    for cat, title in [("fruit", "میوه"), ("knife", "چاقو"), ("board", "تخته (board=)"), ("backdrop", "پس‌زمینه"), ("theme", "تم")]:
+        rows.append(f"{title}:\n" + ", ".join(f"{i} ({name_of(cat, i)})" for i in options.get(cat, {})))
+    rows.append("نوع برش: burst, dice, free\nدوربین: front, top, close\nسرعت: slow, normal, fast\n"
+                "جنس: real, glass · اندازه‌ی میوه: small, medium, large\n"
+                "نت‌ها: piano, organ, musicbox, marimba, notes=glass, nonotes\n"
+                "صدای برش: cutsound=auto, cutsound=knife, cutsound=glass\n"
+                "نوع ادیت: loop (لوپ بی‌درز) · پیش‌فرض edit=normal")
+    return "\n\n".join(rows)
+
+
+# --- recording -----------------------------------------------------------------------------------
+
+def make_video(browser, o, cuts, on_status):
+    """Records one take; the MP4's path."""
+    w, h = ("720", "1280") if o["video"] == "720" else ("1080", "1920")
+    name = f"{o['fruit']}-{o['style']}-{'-'.join(map(str, cuts))}-{int(time.time())}"
+    q = dict(cuts=",".join(map(str, cuts)), style=o["style"], camera=o["camera"], fruit=o["fruit"], speed=o["speed"],
+             board=o["board"], backdrop=o["backdrop"], knife=o["knife"], material=o["material"], size=o["size"],
+             notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"],
+             quality="best" if o["quality"] == "full" else "battery", w=w, h=h, fps=30, name=name)
+    page = browser.new_page(viewport={"width": 540, "height": 960})
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(f"http://127.0.0.1:{PORT}/_rec/record.html?{urllib.parse.urlencode(q)}", timeout=120000)
+        seen, changed, told = None, time.time(), 0.0
+        while True:
+            done = page.evaluate("window.__recDone || null")
+            if done:
+                break
+            status = page.evaluate("(document.getElementById('rec') || {}).textContent || ''")
+            if status != seen:
+                seen, changed = status, time.time()
+            if time.time() - changed > 600:     # nothing new for 10 minutes: the page is stuck
+                done = {"error": "stuck at: " + status + (" / " + errors[-1] if errors else "")}
+                break
+            if time.time() - told > 20:
+                on_status(status)
+                told = time.time()
+            page.wait_for_timeout(3000)
+    finally:
+        page.close()
+    if not done.get("path"):
+        raise RuntimeError(done.get("error") or "the recording failed")
+    return Path(done["path"])
+
+
+def seconds(path):
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True)
+    return float(r.stdout.strip() or 0)
+
+
+def fit(path, dur):
+    """A copy small enough for Telegram (the bitrate that just fits), when the video is not."""
+    if path.stat().st_size <= TG_LIMIT:
+        return path
+    kbps = max(500, int(TG_LIMIT * 8 * 0.9 / max(dur, 1) / 1000) - 128)
+    small = path.with_name(path.stem + "-tg.mp4")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-c:v", "libx264", "-preset", "medium", "-b:v", f"{kbps}k",
+                    "-maxrate", f"{int(kbps * 1.3)}k", "-bufsize", f"{kbps * 2}k", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+                    "-movflags", "+faststart", str(small)], check=True)
+    return small
+
+
+jobs = queue.Queue()
+
+
+def worker():
+    from playwright.sync_api import sync_playwright
+    pw = sync_playwright().start()
+    try:
+        with_browser(pw, load_options)
+    except Exception:                           # noqa: BLE001
+        log("options:", traceback.format_exc())
+    ready.set()
+    while True:
+        chat, msg_id, text = jobs.get()
+        o, cuts, _ = parse(text)
+        note = say(chat, f"⏳ شروع شد: {name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))}", msg_id)
+        note_id = note and note.get("message_id")
+        last = [""]
+
+        def on_status(s, chat=chat, note_id=note_id):
+            s = s.split("\n", 1)[-1].strip()
+            if note_id and s and s != last[0]:
+                last[0] = s
+                tg("editMessageText", chat_id=chat, message_id=note_id, text="⏳ " + s)
+
+        started, files = time.time(), []
+        try:
+            log("game:", get_game())
+            ensure_server()
+            path = with_browser(pw, lambda b: make_video(b, o, cuts, on_status))
+            files.append(path)
+            dur = seconds(path)
+            send = fit(path, dur)
+            files.append(send)
+            on_status(f"در حال فرستادن ({send.stat().st_size / 1e6:.0f} MB)…")
+            w, h = (720, 1280) if o["video"] == "720" else (1080, 1920)
+            tg_file("sendVideo", "video", send, chat_id=chat, reply_to_message_id=msg_id, supports_streaming=True,
+                    width=w, height=h, duration=int(dur),
+                    caption=f"{name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))} cuts · {(time.time() - started) / 60:.1f} min")
+            if note_id:
+                tg("deleteMessage", chat_id=chat, message_id=note_id)
+        except Exception as e:                  # noqa: BLE001
+            log(traceback.format_exc())
+            say(chat, f"❌ {str(e)[:900]}", msg_id)
+        finally:
+            for f in files:
+                f.unlink(missing_ok=True)
+            jobs.task_done()
+
+
+def with_browser(pw, fn):
+    browser = pw.chromium.launch(args=CHROME)
+    try:
+        return fn(browser)
+    finally:
+        browser.close()
+
+
+def load_options(browser):
+    log("game:", get_game())
+    ensure_server()
+    page = browser.new_page()
+    try:
+        page.goto(f"http://127.0.0.1:{PORT}/_rec/options.html", timeout=120000)
+        page.wait_for_function("window.__options", timeout=120000)
+        opts = page.evaluate("window.__options")
+        log("WebGL:", page.evaluate("""() => { const gl = document.createElement('canvas').getContext('webgl2');
+          const e = gl && gl.getExtension('WEBGL_debug_renderer_info'); return gl ? gl.getParameter(e ? e.UNMASKED_RENDERER_WEBGL : gl.RENDERER) : null; }"""))
+    finally:
+        page.close()
+    if opts.get("error"):
+        raise RuntimeError(opts["error"])
+    learn(opts)
+    log("looks:", {k: len(v) for k, v in opts.items()})
+
+
+# --- the conversation ----------------------------------------------------------------------------
+
+def handle(msg):
+    chat, user = msg["chat"]["id"], msg.get("from", {}).get("id")
+    text = (msg.get("text") or "").strip()
+    if not text:
+        return
+    if not OWNERS:
+        say(chat, f"شناسه‌ی شما: {user}\nدر Railway متغیر OWNER_ID را {user} بگذارید تا ربات برای شما کار کند.", msg["message_id"])
+        return
+    if str(user) not in OWNERS and str(chat) not in OWNERS:
+        log("ignored a message from", user)
+        return
+    cmd = text.split()[0].split("@")[0].lower()
+    if cmd in ("/start", "/help"):
+        say(chat, help_text())
+    elif cmd == "/options":
+        say(chat, options_text())
+    elif cmd.startswith("/"):
+        say(chat, help_text())
+    else:
+        ready.wait(300)                         # just after a start the looks are still loading
+        o, cuts, unknown = parse(text)
+        if unknown:
+            say(chat, "این‌ها را نشناختم: " + " ".join(unknown) + "\n/options فهرست همه‌چیز", msg["message_id"])
+            return
+        ahead = jobs.unfinished_tasks
+        jobs.put((chat, msg["message_id"], text))
+        if ahead:
+            say(chat, f"در صف: {ahead} ویدیو جلوتر است.", msg["message_id"])
+
+
+def main():
+    missing = [k for k, v in (("TG_TOKEN", TOKEN), ("GAME_REPO", REPO)) if not v]
+    if missing:
+        sys.exit("set " + ", ".join(missing))
+    learn(options)
+    threading.Thread(target=worker, daemon=True).start()
+    me = tg("getMe")
+    log("bot:", me and me.get("username"), "owners:", len(OWNERS))
+    for owner in OWNERS:                        # also how you learn a video died with the server (out of memory)
+        say(owner, "✅ ربات روشن شد. اگر ویدیویی در حال ساخت بود قطع شده است؛ دوباره بفرست (با حافظه‌ی کم: 720 lite).")
+    offset = None
+    while True:
+        updates = tg("getUpdates", offset=offset, timeout=50, allowed_updates=["message"])
+        if updates is None:
+            time.sleep(5)
+            continue
+        for u in updates:
+            offset = u["update_id"] + 1
+            if "message" in u:
+                try:
+                    handle(u["message"])
+                except Exception:               # noqa: BLE001
+                    log(traceback.format_exc())
+
+
+if __name__ == "__main__":
+    main()
