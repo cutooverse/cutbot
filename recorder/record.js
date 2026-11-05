@@ -145,9 +145,14 @@ const buf = await oc.startRendering();
 await post("/rec/audio", wav(buf));
 
 say(`${NAME}\nencoding the video…`);
-const res = await post(`/rec/done?fps=${FPS}${seam ? `&loop=${seam}` : ""}`);
-window.__recDone = res;
-say(res.path ? `done: ${fi} frames, ${dur.toFixed(1)} s, ${heard.length} sounds\n${res.path}\n(${((Date.now() - started) / 1000).toFixed(0)} s to record)` : `failed: ${res.error}`);
+const encode = `/rec/done?fps=${FPS}${seam ? `&loop=${seam}` : ""}`;
+if (P.get("defer")) {                                  // the driver closes the browser first: a small server needs the memory
+  window.__recDone = { encode };
+} else {
+  const res = await post(encode);
+  window.__recDone = res;
+  say(res.path ? `done: ${fi} frames, ${dur.toFixed(1)} s, ${heard.length} sounds\n${res.path}\n(${((Date.now() - started) / 1000).toFixed(0)} s to record)` : `failed: ${res.error}`);
+}
 
 function wav(b) {                                      // 16-bit PCM WAV of an AudioBuffer
   const ch = b.numberOfChannels, n = b.length, data = new DataView(new ArrayBuffer(44 + n * ch * 2));

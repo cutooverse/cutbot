@@ -24,6 +24,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent                                  # the game folder
 OUT = Path(os.environ.get("REC_OUT", HERE / "out"))        # finished videos (on Colab: a Drive folder)
 WORK = Path(os.environ.get("REC_WORK", HERE / "out"))      # frames while recording (kept off Drive: faster)
+THREADS = os.environ.get("REC_THREADS")             # for ffmpeg on a small server
 take = {"dir": None, "name": None}
 LOOP_FADE = 0.012                                   # s: only on the old end -> start join, so it does not click
 
@@ -122,10 +123,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             cmd = [ffmpeg(), "-y", "-loglevel", "error", "-framerate", fps, "-i", str(frames / "%05d.jpg")]
             if audio and audio.exists():
                 cmd += ["-i", str(audio), "-c:a", "aac", "-b:a", "192k"]
-            cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-shortest", str(out)]
+            cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-shortest"]
+            if THREADS:                                 # x264 takes memory per core it sees, and a cloud box shows many
+                cmd += ["-threads", THREADS, "-rc-lookahead", "20"]
+            cmd.append(str(out))
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode:
-                return self.reply(500, {"error": r.stderr[-800:]})
+                killed = " (killed from outside: probably out of memory)" if r.returncode < 0 else ""
+                return self.reply(500, {"error": r.stderr[-800:].strip() or f"ffmpeg stopped with code {r.returncode}{killed}"})
             if WORK != OUT:
                 shutil.rmtree(d, ignore_errors=True)            # frames are not needed any more
             print(f"wrote {out}", flush=True)

@@ -57,7 +57,7 @@ def tg(method, **params):
 
 def tg_file(method, field, path, **params):
     b = uuid.uuid4().hex
-    parts = [f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{json.dumps(v) if isinstance(v, bool) else v}\r\n'.encode()
+    parts = [f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{json.dumps(v) if isinstance(v, (bool, dict)) else v}\r\n'.encode()
              for k, v in params.items() if v is not None]
     parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\nContent-Type: video/mp4\r\n\r\n'.encode())
     body = b"".join(parts) + path.read_bytes() + f"\r\n--{b}--\r\n".encode()
@@ -102,7 +102,7 @@ def ensure_server():
     global server
     if server and server.poll() is None:
         return
-    env = dict(os.environ, REC_OUT=str(VIDEOS), REC_WORK=str(VIDEOS.parent / "rec_work"))
+    env = dict(os.environ, REC_OUT=str(VIDEOS), REC_WORK=str(VIDEOS.parent / "rec_work"), REC_THREADS="2")
     env.pop("TG_TOKEN", None)
     server = subprocess.Popen([sys.executable, str(GAME / "_rec" / "rec_server.py"), str(PORT)], env=env)
     for _ in range(50):
@@ -127,7 +127,8 @@ FIXED = {                                       # looks that are not lists in th
 }
 ORDER = ["fruit", "style", "camera", "speed", "knife", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit"]
 DEFAULTS = dict(fruit="orange", style="burst", camera="front", speed="normal", knife="chef", backdrop="teal", board="walnut",
-                material="real", size="m", quality="full", video="1080", notes="piano", cutsound="auto", edit="normal")
+                material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal")  # fits 1 GB of memory
+CUTS = [10, 20, 30]
 options = {"fruit": {"orange": {"en": "Orange", "fa": "پرتقال"}}, "backdrop": {}, "board": {}, "knife": {}, "theme": {}}
 words = {}                                      # a word as typed -> (look, id)
 bycat = {}                                      # look -> {word: id}, for board=glass
@@ -157,8 +158,9 @@ def learn(opts):
     words = w
 
 
-def parse(text):
-    """`lemon burst 10,20,30 top slow 720` -> the looks, the cut counts, and the words not understood."""
+def parse(text, base=None):
+    """`lemon burst 10,20,30 top slow 720` -> the looks, the cut counts, and the words not understood.
+    What the line does not name comes from `base` (the chat's menu), else the defaults."""
     t = norm(text)
     for name in sorted((n for n in words if " " in n), key=len, reverse=True):   # names of two words first
         t = t.replace(name, " " + name.replace(" ", "") + " ")
@@ -185,12 +187,12 @@ def parse(text):
             picks[cat] = i
         else:
             unknown.append(tok)
-    o = dict(DEFAULTS)
+    o = dict(base or DEFAULTS)
     th = options.get("theme", {}).get(picks.pop("theme", None) or "")
     if th:                                      # a theme is a board, a backdrop and maybe a fruit
         o.update({k: th[k] for k in ("board", "backdrop", "fruit") if th.get(k)})
     o.update(picks)
-    return o, cuts[:6] or [10, 20, 30], unknown
+    return o, cuts[:6] or o.pop("cuts", CUTS), unknown
 
 
 def name_of(cat, i):
@@ -200,13 +202,14 @@ def name_of(cat, i):
 
 
 def help_text():
-    return ("یک خط بفرست، ویدیو را می‌سازم و همین‌جا می‌فرستم. مثلاً:\n\n"
+    return ("/menu منوی دکمه‌ای: همه‌ی گزینه‌ها با یک لمس.\n\n"
+            "یا یک خط بفرست، ویدیو را می‌سازم و همین‌جا می‌فرستم. مثلاً:\n\n"
             "lemon burst 10,20,30\n"
             "هندوانه دایس 5 15 50 top slow\n"
             "pumpkin halloween 20 720 lite\n\n"
             "عددهای ۱ تا ۱۰۰ = تعداد برش هر بخش (تا ۶ بخش؛ پیش‌فرض 10,20,30)\n"
             "720 یا 1080 = اندازه‌ی ویدیو · lite = سریع‌تر و سبک‌تر · full = کامل\n"
-            "هر چه نگویی پیش‌فرض است: پرتقال، burst، front، normal\n"
+            "هر چه نگویی از تنظیمات منو می‌آید\n"
             "اگر یک کلمه دو معنی دارد، کامل بنویس: material=glass\n\n"
             "/options فهرست میوه‌ها و ظاهرها")
 
@@ -223,16 +226,120 @@ def options_text():
     return "\n\n".join(rows)
 
 
+# --- the menu: buttons under a message ----------------------------------------------------------
+
+CATS = [("fruit", "🍋 میوه"), ("style", "✂️ برش"), ("cuts", "🔢 تعداد"), ("camera", "🎥 دوربین"), ("speed", "⚡ سرعت"),
+        ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("board", "🪵 تخته"),
+        ("backdrop", "🖼 پس‌زمینه"), ("theme", "🎨 تم"), ("material", "💎 جنس"), ("size", "📏 میوه"),
+        ("video", "📐 ویدیو"), ("quality", "✨ کیفیت")]
+TITLES = {"cuts": "تعداد برش هر بخش\nبرای عدد دلخواه، عددها را تایپ کن (مثلاً 7,25,80): ویدیو با همان‌ها ساخته می‌شود.",
+          "edit": "نوع ادیت\nلوپ بی‌درز: فریم آخر به فریم اول می‌رسد.",
+          "notes": "سازی که با هر برش یک نت می‌زند", "cutsound": "صدای برش\nخودکار: برای میوه‌ی شیشه‌ای شیشه، وگرنه چاقو.",
+          "theme": "تم: تخته و پس‌زمینه را با هم عوض می‌کند.", "video": "اندازه‌ی ویدیو\n1080 حدود ۱.۵ گیگ حافظه می‌خواهد.",
+          "quality": "کیفیت\nکامل: سایه و جزئیات بیشتر، کندتر و پرمصرف‌تر."}
+LABELS = {
+    "style": {"burst": "برست", "dice": "دایس", "free": "آزاد"},
+    "camera": {"front": "روبرو", "top": "بالا", "close": "نزدیک"},
+    "speed": {"slow": "آهسته", "normal": "معمولی", "fast": "تند"},
+    "edit": {"normal": "معمولی", "loop": "لوپ"},
+    "notes": {"piano": "پیانو", "organ": "ارگ", "musicbox": "جعبه‌موسیقی", "marimba": "ماریمبا", "glass": "شیشه", "off": "بدون نت"},
+    "cutsound": {"auto": "خودکار", "knife": "چاقو", "glass": "شیشه"},
+    "material": {"real": "واقعی", "glass": "شیشه‌ای"},
+    "size": {"s": "کوچک", "m": "متوسط", "l": "بزرگ"},
+    "video": {"720": "720", "1080": "1080"},
+    "quality": {"lite": "سبک", "full": "کامل"},
+}
+CUT_PRESETS = ["10,20,30", "1,10,50", "10,50,100", "5,15,30", "1,5,10,50,100", "20", "50", "100"]
+MENU_TEXT = "🎛 تنظیمات ویدیو\nهر گزینه را بزن و آخر «ساخت ویدیو» را."
+settings = {}                                   # chat -> its menu; a restart goes back to the defaults
+
+
+def menu_of(chat):
+    return settings.setdefault(chat, dict(DEFAULTS, cuts=list(CUTS)))
+
+
+def choices(cat):
+    if cat == "cuts":
+        return [(c, c.replace(",", " · ")) for c in CUT_PRESETS]
+    return list(LABELS[cat].items()) if cat in LABELS else [(i, name_of(cat, i)) for i in options.get(cat, {})]
+
+
+def now(s, cat):
+    return ",".join(map(str, s["cuts"])) if cat == "cuts" else s.get(cat, "")
+
+
+def grid(buttons, n):
+    return [buttons[i:i + n] for i in range(0, len(buttons), n)]
+
+
+def main_keys(s):
+    def value(cat):
+        return dict(choices(cat)).get(now(s, cat), now(s, cat).replace(",", "·")) or "انتخاب"
+    keys = grid([{"text": f"{title}: {value(cat)}", "callback_data": f"c:{cat}"} for cat, title in CATS], 2)
+    return keys + [[{"text": "▶️ ساخت ویدیو", "callback_data": "go"}]]
+
+
+def cat_keys(s, cat):
+    keys = [{"text": ("✅ " if i == now(s, cat) else "") + label, "callback_data": f"s:{cat}:{i}"} for i, label in choices(cat)]
+    return grid(keys, 3) + [[{"text": "⬅️ برگشت", "callback_data": "m"}]]
+
+
+def send_menu(chat):
+    ready.wait(300)                             # just after a start the looks are still loading
+    tg("sendMessage", chat_id=chat, text=MENU_TEXT, reply_markup={"inline_keyboard": main_keys(menu_of(chat))})
+
+
+def enqueue(chat, msg_id, o, cuts):
+    ahead = jobs.unfinished_tasks
+    jobs.put((chat, msg_id, o, cuts))
+    if ahead:
+        say(chat, f"در صف: {ahead} ویدیو جلوتر است.", msg_id)
+
+
+def press(q):
+    """A button under a message."""
+    chat, user = q["message"]["chat"]["id"], q.get("from", {}).get("id")
+    if not allowed(user, chat):
+        tg("answerCallbackQuery", callback_query_id=q["id"])
+        return log("ignored a button from", user)
+    s, data = menu_of(chat), q.get("data", "")
+    tg("answerCallbackQuery", callback_query_id=q["id"], text="ساخته می‌شود ⏳" if data == "go" else None)
+
+    def show(text, keys):
+        tg("editMessageText", chat_id=chat, message_id=q["message"]["message_id"], text=text, reply_markup={"inline_keyboard": keys})
+
+    if data == "n":                             # under a finished video, which cannot turn into a menu
+        send_menu(chat)
+    elif data == "go":
+        enqueue(chat, None, dict(s), list(s["cuts"]))
+    elif data.startswith("c:") and data[2:] in dict(CATS):
+        cat = data[2:]
+        show(TITLES.get(cat, dict(CATS)[cat]), cat_keys(s, cat))
+    elif data.startswith("s:"):
+        _, cat, v = data.split(":", 2)
+        if cat in dict(CATS) and v in dict(choices(cat)):
+            if cat == "cuts":
+                s["cuts"] = [int(n) for n in v.split(",")]
+            elif cat == "theme":                # a theme is a board, a backdrop and maybe a fruit
+                th = options["theme"][v]
+                s.update({k: th[k] for k in ("board", "backdrop", "fruit") if th.get(k)})
+            else:
+                s[cat] = v
+        show(MENU_TEXT, main_keys(s))
+    else:
+        show(MENU_TEXT, main_keys(s))
+
+
 # --- recording -----------------------------------------------------------------------------------
 
 def make_video(browser, o, cuts, on_status):
-    """Records one take; the MP4's path."""
+    """Records one take; where to ask for its MP4, once the browser is closed."""
     w, h = ("720", "1280") if o["video"] == "720" else ("1080", "1920")
     name = f"{o['fruit']}-{o['style']}-{'-'.join(map(str, cuts))}-{int(time.time())}"
     q = dict(cuts=",".join(map(str, cuts)), style=o["style"], camera=o["camera"], fruit=o["fruit"], speed=o["speed"],
              board=o["board"], backdrop=o["backdrop"], knife=o["knife"], material=o["material"], size=o["size"],
              notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"],
-             quality="best" if o["quality"] == "full" else "battery", w=w, h=h, fps=30, name=name)
+             quality="best" if o["quality"] == "full" else "battery", w=w, h=h, fps=30, name=name, defer=1)
     page = browser.new_page(viewport={"width": 540, "height": 960})
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -255,9 +362,19 @@ def make_video(browser, o, cuts, on_status):
             page.wait_for_timeout(3000)
     finally:
         page.close()
-    if not done.get("path"):
+    if not done.get("encode"):
         raise RuntimeError(done.get("error") or "the recording failed")
-    return Path(done["path"])
+    return done["encode"]
+
+
+def encode(url):
+    """Frames and sound -> MP4, with the browser's memory free again."""
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{url}", data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            return Path(json.load(r)["path"])
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("encoding failed: " + str(json.load(e).get("error"))[:600])
 
 
 def seconds(path):
@@ -272,7 +389,7 @@ def fit(path, dur):
         return path
     kbps = max(500, int(TG_LIMIT * 8 * 0.9 / max(dur, 1) / 1000) - 128)
     small = path.with_name(path.stem + "-tg.mp4")
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-c:v", "libx264", "-preset", "medium", "-b:v", f"{kbps}k",
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-c:v", "libx264", "-preset", "medium", "-threads", "2", "-b:v", f"{kbps}k",
                     "-maxrate", f"{int(kbps * 1.3)}k", "-bufsize", f"{kbps * 2}k", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
                     "-movflags", "+faststart", str(small)], check=True)
     return small
@@ -290,8 +407,7 @@ def worker():
         log("options:", traceback.format_exc())
     ready.set()
     while True:
-        chat, msg_id, text = jobs.get()
-        o, cuts, _ = parse(text)
+        chat, msg_id, o, cuts = jobs.get()
         note = say(chat, f"⏳ شروع شد: {name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))}", msg_id)
         note_id = note and note.get("message_id")
         last = [""]
@@ -306,7 +422,9 @@ def worker():
         try:
             log("game:", get_game())
             ensure_server()
-            path = with_browser(pw, lambda b: make_video(b, o, cuts, on_status))
+            url = with_browser(pw, lambda b: make_video(b, o, cuts, on_status))
+            on_status("در حال ساختن MP4…")
+            path = encode(url)
             files.append(path)
             dur = seconds(path)
             send = fit(path, dur)
@@ -314,8 +432,8 @@ def worker():
             on_status(f"در حال فرستادن ({send.stat().st_size / 1e6:.0f} MB)…")
             w, h = (720, 1280) if o["video"] == "720" else (1080, 1920)
             tg_file("sendVideo", "video", send, chat_id=chat, reply_to_message_id=msg_id, supports_streaming=True,
-                    width=w, height=h, duration=int(dur),
-                    caption=f"{name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))} cuts · {(time.time() - started) / 60:.1f} min")
+                    width=w, height=h, duration=int(dur), reply_markup={"inline_keyboard": [[{"text": "🎛 منو", "callback_data": "n"}]]},
+                    caption=f"{name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))} cuts{' · loop' if o['edit'] == 'loop' else ''} · {(time.time() - started) / 60:.1f} min")
             if note_id:
                 tg("deleteMessage", chat_id=chat, message_id=note_id)
         except Exception as e:                  # noqa: BLE001
@@ -355,6 +473,10 @@ def load_options(browser):
 
 # --- the conversation ----------------------------------------------------------------------------
 
+def allowed(user, chat):
+    return str(user) in OWNERS or str(chat) in OWNERS
+
+
 def handle(msg):
     chat, user = msg["chat"]["id"], msg.get("from", {}).get("id")
     text = (msg.get("text") or "").strip()
@@ -363,11 +485,13 @@ def handle(msg):
     if not OWNERS:
         say(chat, f"شناسه‌ی شما: {user}\nدر Railway متغیر OWNER_ID را {user} بگذارید تا ربات برای شما کار کند.", msg["message_id"])
         return
-    if str(user) not in OWNERS and str(chat) not in OWNERS:
+    if not allowed(user, chat):
         log("ignored a message from", user)
         return
     cmd = text.split()[0].split("@")[0].lower()
-    if cmd in ("/start", "/help"):
+    if cmd in ("/start", "/menu"):
+        send_menu(chat)
+    elif cmd == "/help":
         say(chat, help_text())
     elif cmd == "/options":
         say(chat, options_text())
@@ -375,14 +499,11 @@ def handle(msg):
         say(chat, help_text())
     else:
         ready.wait(300)                         # just after a start the looks are still loading
-        o, cuts, unknown = parse(text)
+        o, cuts, unknown = parse(text, menu_of(chat))
         if unknown:
             say(chat, "این‌ها را نشناختم: " + " ".join(unknown) + "\n/options فهرست همه‌چیز", msg["message_id"])
             return
-        ahead = jobs.unfinished_tasks
-        jobs.put((chat, msg["message_id"], text))
-        if ahead:
-            say(chat, f"در صف: {ahead} ویدیو جلوتر است.", msg["message_id"])
+        enqueue(chat, msg["message_id"], o, list(cuts))
 
 
 def main():
@@ -393,19 +514,21 @@ def main():
     threading.Thread(target=worker, daemon=True).start()
     me = tg("getMe")
     log("bot:", me and me.get("username"), "owners:", len(OWNERS))
+    tg("setMyCommands", commands=[{"command": "menu", "description": "منوی ساخت ویدیو"}, {"command": "help", "description": "راهنمای نوشتنی"},
+                                  {"command": "options", "description": "فهرست میوه‌ها و ظاهرها"}])
     for owner in OWNERS:                        # also how you learn a video died with the server (out of memory)
-        say(owner, "✅ ربات روشن شد. اگر ویدیویی در حال ساخت بود قطع شده است؛ دوباره بفرست (با حافظه‌ی کم: 720 lite).")
+        say(owner, "✅ ربات روشن شد: /menu\nاگر ویدیویی در حال ساخت بود قطع شده است؛ دوباره بفرست (با حافظه‌ی کم: 720 و سبک).")
     offset = None
     while True:
-        updates = tg("getUpdates", offset=offset, timeout=50, allowed_updates=["message"])
+        updates = tg("getUpdates", offset=offset, timeout=50, allowed_updates=["message", "callback_query"])
         if updates is None:
             time.sleep(5)
             continue
         for u in updates:
             offset = u["update_id"] + 1
-            if "message" in u:
+            if "message" in u or "callback_query" in u:
                 try:
-                    handle(u["message"])
+                    press(u["callback_query"]) if "callback_query" in u else handle(u["message"])
                 except Exception:               # noqa: BLE001
                     log(traceback.format_exc())
 
