@@ -3,6 +3,7 @@
     ..\\..\\.venv\\Scripts\\python rec_server.py          (from cutgame/_rec)  ->  http://localhost:8770/_rec/record.html
 
 POST /rec/start?name=X      start a take (clears _rec/out/X)
+     &append=1             or go on with take X: its frames and sound follow the ones it has
 POST /rec/frame?i=N         one JPEG frame
 POST /rec/audio             the WAV soundtrack
 POST /rec/done?fps=30       encode -> _rec/out/X.mp4, answers {"path": ...}
@@ -25,7 +26,7 @@ ROOT = HERE.parent                                  # the game folder
 OUT = Path(os.environ.get("REC_OUT", HERE / "out"))        # finished videos (on Colab: a Drive folder)
 WORK = Path(os.environ.get("REC_WORK", HERE / "out"))      # frames while recording (kept off Drive: faster)
 THREADS = os.environ.get("REC_THREADS")             # for ffmpeg on a small server
-take = {"dir": None, "name": None}
+take = {"dir": None, "name": None, "offset": 0}
 LOOP_FADE = 0.012                                   # s: only on the old end -> start join, so it does not click
 
 
@@ -35,6 +36,20 @@ def ffmpeg():
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:                               # noqa: BLE001
         return "ffmpeg"
+
+
+def join_sound(d):
+    """The sound of each part of a take (audio_<first frame>.wav), one after another -> audio.wav."""
+    parts = sorted(d.glob("audio_*.wav"))
+    if not parts:
+        return
+    with wave.open(str(parts[0])) as w:
+        params = w.getparams()
+    with wave.open(str(d / "audio.wav"), "wb") as out:
+        out.setparams(params)
+        for p in parts:
+            with wave.open(str(p)) as w:
+                out.writeframes(w.readframes(w.getnframes()))
 
 
 def rotate_take(d, seam, fps):
@@ -98,32 +113,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if u.path == "/rec/start":
             name = "".join(c for c in q.get("name", "take") if c.isalnum() or c in "-_") or "take"
             d = WORK / name
-            shutil.rmtree(d, ignore_errors=True)
-            (d / "frames").mkdir(parents=True)
-            take.update(dir=d, name=name)
-            return self.reply(200, {"ok": True})
+            if q.get("append") and (d / "frames").is_dir():
+                offset = len(list((d / "frames").glob("*.jpg")))
+            else:
+                shutil.rmtree(d, ignore_errors=True)
+                (d / "frames").mkdir(parents=True)
+                offset = 0
+            take.update(dir=d, name=name, offset=offset)
+            return self.reply(200, {"ok": True, "offset": offset})
         if not take["dir"]:
             return self.reply(400, {"error": "no take started"})
         d = take["dir"]
         if u.path == "/rec/frame":
-            (d / "frames" / f"{int(q['i']):05d}.jpg").write_bytes(data)
+            (d / "frames" / f"{int(q['i']) + take['offset']:05d}.jpg").write_bytes(data)
             return self.reply(200, {"ok": True})
         if u.path == "/rec/audio":
-            (d / "audio.wav").write_bytes(data)
+            (d / f"audio_{take['offset']:05d}.wav").write_bytes(data)
             return self.reply(200, {"ok": True})
         if u.path == "/rec/done":
             fps = q.get("fps", "30")
             OUT.mkdir(parents=True, exist_ok=True)
+            join_sound(d)
             frames, audio = d / "frames", d / "audio.wav"
             suffix = ""
-            if q.get("loop"):
-                frames, audio = rotate_take(d, int(q["loop"]), fps)
+            if q.get("loop"):                           # counted in the last part, which holds the seam
+                frames, audio = rotate_take(d, int(q["loop"]) + take["offset"], fps)
                 suffix = "_loop"
             out = OUT / f"{take['name']}{suffix}.mp4"
             cmd = [ffmpeg(), "-y", "-loglevel", "error", "-framerate", fps, "-i", str(frames / "%05d.jpg")]
             if audio and audio.exists():
                 cmd += ["-i", str(audio), "-c:a", "aac", "-b:a", "192k"]
-            cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-shortest"]
+            cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+            # no -shortest: the sound is cut to the frames already, and -shortest makes ffmpeg hold ~1.2 GB at 1080
             if THREADS:                                 # x264 takes memory per core it sees, and a cloud box shows many
                 cmd += ["-threads", THREADS, "-rc-lookahead", "20"]
             cmd.append(str(out))

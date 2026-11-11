@@ -332,14 +332,14 @@ def press(q):
 
 # --- recording -----------------------------------------------------------------------------------
 
-def make_video(browser, o, cuts, on_status):
-    """Records one take; where to ask for its MP4, once the browser is closed."""
+def make_video(browser, o, cuts, on_status, name, **extra):
+    """Records one take, or one part of it (extra: append=1 / tail=0); where to ask for its MP4 once the browser is closed."""
     w, h = ("720", "1280") if o["video"] == "720" else ("1080", "1920")
-    name = f"{o['fruit']}-{o['style']}-{'-'.join(map(str, cuts))}-{int(time.time())}"
     q = dict(cuts=",".join(map(str, cuts)), style=o["style"], camera=o["camera"], fruit=o["fruit"], speed=o["speed"],
              board=o["board"], backdrop=o["backdrop"], knife=o["knife"], material=o["material"], size=o["size"],
              notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"],
-             quality="best" if o["quality"] == "full" else "battery", w=w, h=h, fps=30, name=name, defer=1)
+             quality="best" if o["quality"] == "full" else "battery", w=w, h=h, fps=30, name=name, defer=1,
+             **{k: v for k, v in extra.items() if v is not None})
     page = browser.new_page(viewport={"width": 540, "height": 960})
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -422,7 +422,12 @@ def worker():
         try:
             log("game:", get_game())
             ensure_server()
-            url = with_browser(pw, lambda b: make_video(b, o, cuts, on_status))
+            # each segment in a browser of its own: memory never piles up from one segment into the next
+            name = f"{o['fruit']}-{o['style']}-{'-'.join(map(str, cuts))}-{int(time.time())}"
+            for k, n in enumerate(cuts):
+                part = (lambda s, k=k: on_status(f"بخش {k + 1} از {len(cuts)} · {s.split(chr(10), 1)[-1]}")) if len(cuts) > 1 else on_status
+                final = k == len(cuts) - 1
+                url = with_browser(pw, lambda b: make_video(b, o, [n], part, name, append=1 if k else None, tail=None if final else 0))
             on_status("در حال ساختن MP4…")
             path = encode(url)
             files.append(path)

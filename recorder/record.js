@@ -4,11 +4,16 @@
 //   http://localhost:8770/_rec/record.html?cuts=10,20,30&style=burst&camera=front&fruit=orange
 //   other options: speed, board, backdrop, material, knife, size, cutsound (auto, knife, glass),
 //   notes (off, piano, organ, musicbox, marimba, glass), edit (normal, loop), w=1080, h=1920, fps=30, name
+//   format=vs: the "1 Cut VS N Cuts" short: a 2 s opening from the last segment's frenzy, smaller titles,
+//   no piece count, a zoom out into the first segment, no notes unless asked. blur=3: motion blur (3 renders a frame)
+//   append=1: go on with the take of the same name (one segment per browser, for a server short of memory);
+//   tail=0: no empty moment at the end (a segment that is not the last)
 
 const P = new URLSearchParams(location.search);
 const CUTS = (P.get("cuts") || "10,20,30").split(",").map(Number).filter(n => n > 0);
 const W = +(P.get("w") || 1080), H = +(P.get("h") || 1920), FPS = +(P.get("fps") || 30);
 const NAME = P.get("name") || `${P.get("fruit") || "orange"}-${P.get("style") || "burst"}-${CUTS.join("-")}`;
+const VS = P.get("format") === "vs", BLUR = Math.max(1, +(P.get("blur") || 1));
 const say = t => { document.getElementById("rec").textContent = t; };
 // any failure ends the take, so whoever is waiting (the Colab notebook) is told instead of waiting forever
 addEventListener("error", e => { window.__recDone = { error: String(e.message) }; });
@@ -25,11 +30,11 @@ document.body.appendChild(note);
 // --- looks for this take (this origin keeps its own storage, the game's is untouched)
 localStorage.setItem("cutcount.v1", JSON.stringify({
   looks: { fruit: P.get("fruit") || "orange", style: P.get("style") || "burst", camera: P.get("camera") || "front",
-    speed: P.get("speed") || "normal", cuts: CUTS[0], board: P.get("board") || "walnut", backdrop: P.get("backdrop") || "teal",
+    speed: P.get("speed") || "normal", cuts: CUTS[0], board: P.get("board") || "walnut", backdrop: P.get("backdrop") || (VS ? "short" : "teal"),
     material: P.get("material") || "real", knife: P.get("knife") || "chef", size: P.get("size") || "m" },
   // quality: best (full shadows) or battery (the light phone profile: much faster without a GPU)
   settings: { sound: true, haptics: false, strength: "normal", quality: P.get("quality") || "best", lang: "en",
-    cutSound: P.get("cutsound") || "auto", notes: P.get("notes") || "piano" }, stars: Array(9).fill(3),   // the Sound sheet
+    cutSound: P.get("cutsound") || "auto", notes: P.get("notes") || (VS ? "off" : "piano") }, stars: Array(9).fill(3),   // the Sound sheet
 }));
 
 // --- a made-up clock and a frame the size of the video
@@ -50,9 +55,25 @@ store.unlocked = [...(await import("../src/tasks.js")).VIDEO_UNLOCK];
 const heard = [], play = {};
 for (const k of Object.keys(S.sfx)) { play[k] = S.sfx[k]; S.sfx[k] = (...a) => heard.push({ k, a, t: vnow / 1000 }); }
 
+if (VS) {                                              // the short's look: a pale teal, and no knife waiting in the shot
+  const { BACKDROPS } = await import("../src/stage.js");
+  BACKDROPS.short = { name: { en: "Short", fa: "شورت" }, sky: ["#5a7b80", "#6d8b90"], bg: "#6a888d", floor: "#86a3a8", ground: 0x6a888d, key: 0xfff1dc, rim: 0xe6fbff, light: false };
+  if ((P.get("style") || "burst") === "burst") {
+    const { KnifeRig } = await import("../src/knife.js");
+    const update = KnifeRig.prototype.update;
+    KnifeRig.prototype.update = function (dt) { update.call(this, dt); this.group.visible = !!this.anim; };
+  }
+}
+
 say("starting the game…");
 await import("../src/app.js");
 await document.fonts.load("900 100px Poppins");
+await document.fonts.load("700 100px Poppins");
+if (VS) {                                              // the short's cut lines read at phone size: thicker than the game's
+  const { fruitMaterials } = await import("../src/fruits.js");
+  const mats = fruitMaterials(store.looks.fruit, store.looks.material === "glass", 0);
+  for (const m of [mats.skin, mats.flesh]) m.userData.U.uLineW.value = 0.0011;
+}
 
 const $ = id => document.getElementById(id);
 const gl = document.querySelector("#stage canvas");
@@ -62,9 +83,29 @@ const preview = document.createElement("canvas"); preview.id = "preview"; previe
 document.body.appendChild(preview);
 
 const post = (path, body) => fetch(path, { method: "POST", body }).then(r => r.json());
-let fi = 0, title = "", showCount = false;
+const HOOK = VS && P.get("edit") !== "loop" ? 2 * FPS : 0;  // the opening's frames, filled in when the last segment is done
+let fi = HOOK, title = "", showCount = false, zoomFrom = -1;
+let ring = null, ringOn = false;                       // the last segment's picture without titles, for the opening
+const base = document.createElement("canvas"); base.width = W; base.height = H;
+const b = base.getContext("2d");
+const cutLabel = n => `${n} ${n === 1 ? "Cut" : "Cuts"}`;
+
+// the short's captions: Poppins Bold 112 from y 150 with a soft shadow, as the Blender videos have them
+function caption(lines) {
+  const k = W / 1080;
+  g.font = `700 ${112 * k}px Poppins, sans-serif`; g.textAlign = "center"; g.textBaseline = "alphabetic";
+  g.shadowColor = "rgba(0,0,0,0.6)"; g.shadowBlur = 14 * k; g.shadowOffsetX = 3 * k; g.shadowOffsetY = 5 * k;
+  let y = 150 * k;
+  for (const [text, color] of lines) {
+    const m = g.measureText(text);
+    g.fillStyle = color; g.fillText(text, W / 2, y + m.actualBoundingBoxAscent);
+    y += m.actualBoundingBoxAscent + m.actualBoundingBoxDescent + 112 * k * 0.18;
+  }
+  g.shadowColor = "transparent"; g.shadowBlur = g.shadowOffsetX = g.shadowOffsetY = 0;
+}
 
 function overlay() {
+  if (VS) { if (title) caption([[title, "#ffffff"]]); return; }
   const k = W / 1080;
   g.textAlign = "center"; g.textBaseline = "alphabetic";
   g.shadowColor = "rgba(0,0,0,0.5)"; g.shadowBlur = 24 * k; g.shadowOffsetY = 4 * k;
@@ -87,10 +128,20 @@ async function frame() {
     window.__recDone = { error: "WebGL context lost: the browser probably ran out of memory" };
     throw new Error(window.__recDone.error);
   }
-  vnow += 1000 / FPS;
-  const run = waiting; waiting = [];
-  for (const cb of run) cb(vnow);
-  g.drawImage(gl, 0, 0, W, H);                         // right after the render, before the buffer clears
+  const zoom = zoomFrom < 0 ? 1 : 1 + 1.6 * Math.max(0, 1 - (fi - zoomFrom) / (0.45 * FPS)) ** 3;
+  for (let j = 0; j < BLUR; j++) {                      // several moments of each frame, averaged: motion blur
+    vnow += 1000 / FPS / BLUR;
+    const run = waiting; waiting = [];
+    for (const cb of run) cb(vnow);
+    b.globalAlpha = 1 / (j + 1);                        // right after the render, before the buffer clears
+    const sw = W / zoom, sh = H / zoom;                 // zooming on the fruit, 38 % down the frame
+    b.drawImage(gl, (W - sw) / 2, (H * 0.38) * (1 - 1 / zoom), sw, sh, 0, 0, W, H);
+  }
+  g.drawImage(base, 0, 0);
+  if (ringOn) {
+    ring.push({ t: vnow / 1000, jpg: await new Promise(r => base.toBlob(r, "image/jpeg", 0.97)) });
+    if (ring.length > HOOK) ring.shift();               // keeps the last 2 s of the chopping
+  }
   overlay();
   preview.getContext("2d").drawImage(out, 0, 0, preview.width, preview.height);
   const jpg = await new Promise(r => out.toBlob(r, "image/jpeg", 0.92));
@@ -114,18 +165,20 @@ const press = type => gl.dispatchEvent(new PointerEvent(type, { bubbles: true, c
 const LOOP = P.get("edit") === "loop";
 let seam = 0;
 
-await post(`/rec/start?name=${encodeURIComponent(NAME)}`);
+await post(`/rec/start?name=${encodeURIComponent(NAME)}${P.get("append") ? "&append=1" : ""}`);
 document.querySelector('[data-mode="chop"]').click();
 const started = Date.now();                            // the real clock, for the report
 for (const [i, n] of CUTS.entries()) {
   setCuts(n);                                          // also starts a fresh fruit
-  title = `${n} Cuts`; showCount = false;
+  title = VS ? cutLabel(n) : `${n} Cuts`; showCount = false;
+  zoomFrom = VS && i === 0 ? fi : -1;
   say(`${NAME}\n${title}: getting ready`);
-  await frames(0.8);
+  await frames(VS ? (i === 0 ? 0.5 : 0.15) : 0.8);
+  const last = i === CUTS.length - 1;
+  if (HOOK && last) { ring = []; ringOn = true; }
   press("pointerdown");
   let guard = 0;
   const made = () => Number($("chopBig").textContent.split("/")[0].replace(/[^\d]/g, ""));
-  const last = i === CUTS.length - 1;
   while (made() < n) {
     await frame();
     if (LOOP && last && !seam && made() >= Math.ceil(n / 2)) seam = fi;
@@ -135,16 +188,45 @@ for (const [i, n] of CUTS.entries()) {
   if (LOOP && last && !seam) seam = fi;
   if (store.looks.style === "free") press("pointerup");   // Free style chops while held: let go at n
   showCount = true;
-  await frames(3.2);                                  // the fall and the count
+  if (ringOn && ring.length >= HOOK) ringOn = false;  // a short chop: the opening goes on into the fall
+  for (let f = 0; f < Math.round((VS ? 1.8 : 3.2) * FPS); f++) {  // the fall and the count
+    await frame();
+    if (ringOn && ring.length >= HOOK) ringOn = false;
+  }
+  while (ringOn) {                                    // a very short take: the opening still needs all its frames
+    await frame();
+    if (ring.length >= HOOK) ringOn = false;
+  }
   press("pointerup");
 }
-if (!LOOP) { title = ""; await frames(0.4); }        // a loop ends on the pile, like every segment
+if (!LOOP && !VS && P.get("tail") !== "0") { title = ""; await frames(0.4); }  // a loop ends on the pile, like every segment
+
+// the opening: the end of the last segment's frenzy, its sound first, with the VS card
+let hookAt = 0;
+if (HOOK) {
+  say(`${NAME}
+the opening…`);
+  hookAt = ring[0].t - 1 / FPS;
+  const first = cutLabel(CUTS[0]), top = cutLabel(CUTS[CUTS.length - 1]);
+  for (const [k, f] of ring.entries()) {
+    const bmp = await createImageBitmap(f.jpg);
+    g.drawImage(bmp, 0, 0); bmp.close();
+    caption([[first, "#ffffff"], ["VS", "#ffffff"], k < HOOK / 2 ? ["...", "#ffffff"] : [top, "#e82828"]]);
+    const jpg = await new Promise(r => out.toBlob(r, "image/jpeg", 0.92));
+    await fetch(`/rec/frame?i=${k}`, { method: "POST", body: jpg });
+  }
+}
 
 say(`${NAME}\nrendering the sound…`);
 const dur = fi / FPS, SR = 48000;
 const oc = new OfflineAudioContext(2, Math.ceil(SR * dur), SR);
 S.useOffline(oc);
-for (const e of heard) { S.startAt(e.t); play[e.k](...e.a); }
+const hookS = HOOK / FPS;
+for (const e of heard) {
+  if (VS && (e.k === "tick" || e.k === "win")) continue;  // the game's menu and new-best sounds
+  if (HOOK && e.t >= hookAt && e.t < hookAt + hookS) { S.startAt(e.t - hookAt); play[e.k](...e.a); }
+  S.startAt(e.t + hookS); play[e.k](...e.a);
+}
 const buf = await oc.startRendering();
 await post("/rec/audio", wav(buf));
 

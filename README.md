@@ -19,8 +19,9 @@ open port: it asks Telegram for messages (long polling).
 3. The service's Variables: `TG_TOKEN`, `GAME_REPO` (and `OWNER_ID` once you know it). It redeploys.
 4. Message the bot. `/menu` is the button menu, `/help` how to type a request, `/options` every fruit and look.
 
-Memory measured on the browser and recorder together: about 0.9 GB for `720 lite`, about 1.5 GB for
-1080 at full quality. Railway's Trial stops at 1 GB and its Free plan at 0.5 GB; Hobby has room for both.
+Each segment is recorded in a browser of its own and the MP4 is built after the browser closes, so memory
+does not pile up. Measured on Windows (Edge, SwiftShader) for 1080 at full quality, 5/15/30 cuts: about
+0.8 GB per segment, about 0.3 GB for the encode. Railway's Trial stops at 1 GB, its Free plan at 0.5 GB.
 
 ## Files
 
