@@ -19,9 +19,16 @@ open port: it asks Telegram for messages (long polling).
 3. The service's Variables: `TG_TOKEN`, `GAME_REPO` (and `OWNER_ID` once you know it). It redeploys.
 4. Message the bot. `/menu` is the button menu, `/help` how to type a request, `/options` every fruit and look.
 
-Each segment is recorded in a browser of its own and the MP4 is built after the browser closes, so memory
-does not pile up. Measured on Windows (Edge, SwiftShader) for 1080 at full quality, 5/15/30 cuts: about
-0.8 GB per segment, about 0.3 GB for the encode. Railway's Trial stops at 1 GB, its Free plan at 0.5 GB.
+Memory, for a server with 1 GB:
+
+- each segment is recorded in a browser of its own, and the MP4 is built after the browser closes;
+- at full quality each frame is drawn as 2 x 2 tiles on a canvas a quarter of the size (`tiles=2`), with the
+  site's desktop quality (2048 shadows; 4096 alone take over 100 MB more);
+- the first round starts without the Looks sheet, which would draw every fruit's thumbnail;
+- a part that fails is recorded once more; each part's peak memory is logged.
+
+Measured on Windows (headless Edge, SwiftShader), 1080 at full quality: 0.48 GB for the browser in one
+segment (0.77 GB before), 0.63 GB with the helpers for a 5/10/40/75 video, 0.36 GB for the encode.
 
 ## Files
 
