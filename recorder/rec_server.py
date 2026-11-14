@@ -114,7 +114,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             name = "".join(c for c in q.get("name", "take") if c.isalnum() or c in "-_") or "take"
             d = WORK / name
             if q.get("append") and (d / "frames").is_dir():
-                offset = len(list((d / "frames").glob("*.jpg")))
+                # after the parts that finished (a part that failed half way is recorded again over its frames)
+                offset = int((d / "kept").read_text()) if (d / "kept").exists() else 0
+                for f in (d / "frames").glob("*.jpg"):
+                    if int(f.stem) >= offset:
+                        f.unlink()
+                for f in d.glob("audio_*.wav"):
+                    if int(f.stem.split("_")[1]) >= offset:
+                        f.unlink()
             else:
                 shutil.rmtree(d, ignore_errors=True)
                 (d / "frames").mkdir(parents=True)
@@ -129,6 +136,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.reply(200, {"ok": True})
         if u.path == "/rec/audio":
             (d / f"audio_{take['offset']:05d}.wav").write_bytes(data)
+            (d / "kept").write_text(str(len(list((d / "frames").glob("*.jpg")))))   # the sound comes last: this part is whole
             return self.reply(200, {"ok": True})
         if u.path == "/rec/done":
             fps = q.get("fps", "30")

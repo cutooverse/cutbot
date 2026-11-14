@@ -8,12 +8,15 @@
 //   no piece count, a zoom out into the first segment, no notes unless asked. blur=3: motion blur (3 renders a frame)
 //   append=1: go on with the take of the same name (one segment per browser, for a server short of memory);
 //   tail=0: no empty moment at the end (a segment that is not the last)
+//   tiles=2: each frame drawn as 2 x 2 tiles on a canvas a quarter of the size, then put together: the same
+//   picture for much less memory and more time (a server with 1 GB)
 
 const P = new URLSearchParams(location.search);
 const CUTS = (P.get("cuts") || "10,20,30").split(",").map(Number).filter(n => n > 0);
 const W = +(P.get("w") || 1080), H = +(P.get("h") || 1920), FPS = +(P.get("fps") || 30);
 const NAME = P.get("name") || `${P.get("fruit") || "orange"}-${P.get("style") || "burst"}-${CUTS.join("-")}`;
 const VS = P.get("format") === "vs", BLUR = Math.max(1, +(P.get("blur") || 1));
+const TILES = Math.max(1, Math.round(+(P.get("tiles") || 1)));
 const say = t => { document.getElementById("rec").textContent = t; };
 // any failure ends the take, so whoever is waiting (the Colab notebook) is told instead of waiting forever
 addEventListener("error", e => { window.__recDone = { error: String(e.message) }; });
@@ -45,7 +48,36 @@ window.requestAnimationFrame = cb => { waiting.push(cb); return waiting.length; 
 window.cancelAnimationFrame = () => {};
 Object.defineProperty(window, "innerWidth", { get: () => W / 2 });
 Object.defineProperty(window, "innerHeight", { get: () => H / 2 });
-Object.defineProperty(window, "devicePixelRatio", { get: () => 2 });
+Object.defineProperty(window, "devicePixelRatio", { get: () => 2 / TILES });   // tiled: the canvas is one tile
+
+// --- tiles: the game's one render of a frame becomes TILES x TILES renders, each a part of the view at
+// the canvas's full sharpness, copied into `shot` as it is made
+let shot = null;
+if (TILES > 1) {
+  const THREE = await import("three");
+  shot = document.createElement("canvas"); shot.width = W; shot.height = H;
+  const sg = shot.getContext("2d");
+  let wrapped = null;
+  THREE.Scene.prototype.onBeforeRender = function (renderer) {   // the first render tells us the game's renderer
+    if (wrapped || !renderer.domElement.closest?.("#stage")) return;
+    wrapped = renderer;
+    const draw = renderer.render;
+    renderer.render = function (scene, cam) {
+      if (renderer.getRenderTarget() || !cam.isPerspectiveCamera) return draw.call(this, scene, cam);   // reflections, shadows
+      const el = renderer.domElement, cw = el.width, ch = el.height;
+      const v = cam.view && cam.view.enabled ? { ...cam.view } : null;       // the game's own offset (the Looks sheet lifts the view)
+      const full = v || { fullWidth: cw, fullHeight: ch, offsetX: 0, offsetY: 0, width: cw, height: ch };
+      const kx = cw / full.width, ky = ch / full.height;
+      for (let ty = 0; ty < TILES; ty++) for (let tx = 0; tx < TILES; tx++) {
+        cam.setViewOffset(full.fullWidth * kx * TILES, full.fullHeight * ky * TILES,
+          full.offsetX * kx * TILES + tx * cw, full.offsetY * ky * TILES + ty * ch, cw, ch);
+        draw.call(this, scene, cam);
+        sg.drawImage(el, 0, 0, cw, ch, Math.round(tx * W / TILES), Math.round(ty * H / TILES), Math.round(W / TILES), Math.round(H / TILES));
+      }
+      if (v) cam.setViewOffset(v.fullWidth, v.fullHeight, v.offsetX, v.offsetY, v.width, v.height); else cam.clearViewOffset();
+    };
+  };
+}
 
 // --- every sound is noted with its moment, and rendered afterwards
 const S = await import("../src/sound.js");
@@ -134,9 +166,9 @@ async function frame() {
     const run = waiting; waiting = [];
     for (const cb of run) cb(vnow);
     b.globalAlpha = 1 / (j + 1);                        // right after the render, before the buffer clears
-    const cw = gl.width, ch = gl.height;                // the game's canvas: half the video's size at light quality
+    const src = shot || gl, cw = src.width, ch = src.height;   // the game's canvas (half the video's size at light quality), or the tiles
     const sw = cw / zoom, sh = ch / zoom;               // zooming on the fruit, 38 % down the frame
-    b.drawImage(gl, (cw - sw) / 2, (ch * 0.38) * (1 - 1 / zoom), sw, sh, 0, 0, W, H);
+    b.drawImage(src, (cw - sw) / 2, (ch * 0.38) * (1 - 1 / zoom), sw, sh, 0, 0, W, H);
   }
   g.drawImage(base, 0, 0);
   if (ringOn) {
@@ -167,10 +199,13 @@ const LOOP = P.get("edit") === "loop";
 let seam = 0;
 
 await post(`/rec/start?name=${encodeURIComponent(NAME)}${P.get("append") ? "&append=1" : ""}`);
+store.looks.cuts = CUTS[0];                            // the first round starts with its count (a saved one stops at 100)
 document.querySelector('[data-mode="chop"]').click();
 const started = Date.now();                            // the real clock, for the report
 for (const [i, n] of CUTS.entries()) {
-  setCuts(n);                                          // also starts a fresh fruit
+  // the first segment has its count already; opening the Looks sheet draws every fruit's thumbnail (a second
+  // WebGL picture and 17 fruits' shaders), memory a small server does not have
+  if (i) setCuts(n);                                   // also starts a fresh fruit
   title = VS ? cutLabel(n) : `${n} Cuts`; showCount = false;
   zoomFrom = VS && i === 0 ? fi : -1;
   say(`${NAME}\n${title}: getting ready`);

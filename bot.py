@@ -372,21 +372,44 @@ def press(q):
 
 # --- recording -----------------------------------------------------------------------------------
 
+def memory():
+    """(used, limit) of this container in MB, without the files it has cached; None where there is no cgroup."""
+    try:
+        g = Path("/sys/fs/cgroup")
+        if (g / "memory.current").exists():         # cgroup v2
+            limit = (g / "memory.max").read_text().strip()
+            stat = dict(l.split() for l in (g / "memory.stat").read_text().splitlines())
+            used = int((g / "memory.current").read_text()) - int(stat.get("file", 0))
+        else:
+            g = g / "memory"
+            limit = (g / "memory.limit_in_bytes").read_text().strip()
+            stat = dict(l.split() for l in (g / "memory.stat").read_text().splitlines())
+            used = int((g / "memory.usage_in_bytes").read_text()) - int(stat.get("total_cache", stat.get("cache", 0)))
+        limit = None if limit == "max" or int(limit) > 1 << 50 else int(limit) >> 20
+        return used >> 20, limit
+    except (OSError, ValueError):
+        return None
+
+
 def make_video(browser, o, cuts, on_status, name, **extra):
     """Records one take, or one part of it (extra: append=1 / tail=0); where to ask for its MP4 once the browser is closed."""
     w, h = ("720", "1280") if o["video"] == "720" else ("1080", "1920")
     q = dict(cuts=",".join(map(str, cuts)), style=o["style"], camera=o["camera"], fruit=o["fruit"], speed=o["speed"],
              board=o["board"], backdrop=o["backdrop"], knife=o["knife"], material=o["material"], size=o["size"],
              notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"], **({"format": "vs"} if o.get("format") == "vs" else {}),
-             quality="best" if o["quality"] == "full" else "battery", w=w, h=h, fps=30, name=name, defer=1,
-             **{k: v for k, v in extra.items() if v is not None})
+             w=w, h=h, fps=30, name=name, defer=1, **{k: v for k, v in extra.items() if v is not None})
+    # full: the site's look on a computer, each frame drawn as 2 x 2 tiles on a small canvas (the same picture
+    # for less memory and more time); 4096 shadows ("best") alone take over 100 MB more
+    q.update(dict(quality="auto", tiles=2) if o["quality"] == "full" else dict(quality="battery"))
     page = browser.new_page(viewport={"width": 540, "height": 960})
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     try:
         page.goto(f"http://127.0.0.1:{PORT}/_rec/record.html?{urllib.parse.urlencode(q)}", timeout=120000)
-        seen, changed, told = None, time.time(), 0.0
+        seen, changed, told, peak = None, time.time(), 0.0, 0
         while True:
+            m = memory()
+            peak = max(peak, m[0]) if m else peak
             done = page.evaluate("window.__recDone || null")
             if done:
                 break
@@ -402,6 +425,8 @@ def make_video(browser, o, cuts, on_status, name, **extra):
             page.wait_for_timeout(3000)
     finally:
         page.close()
+    if m:
+        log(f"part {cuts}: memory peak {peak} MB" + (f" of {m[1]} MB" if m[1] else ""))
     if not done.get("encode"):
         raise RuntimeError(done.get("error") or "the recording failed")
     return done["encode"]
@@ -469,7 +494,15 @@ def worker():
             for k, seg in enumerate(parts):
                 part = (lambda s, k=k: on_status(f"بخش {k + 1} از {len(parts)} · {s.split(chr(10), 1)[-1]}")) if len(parts) > 1 else on_status
                 final = k == len(parts) - 1
-                url = with_browser(pw, lambda b: make_video(b, o, seg, part, name, append=1 if k else None, tail=None if final else 0))
+                for attempt in (1, 2):                  # a part that fails is recorded once more, in a new browser
+                    try:
+                        url = with_browser(pw, lambda b: make_video(b, o, seg, part, name, append=1 if k else None, tail=None if final else 0))
+                        break
+                    except Exception as e:              # noqa: BLE001
+                        if attempt == 2:
+                            raise
+                        log(f"part {k + 1} failed ({str(e)[:120]}): once more")
+                        part("دوباره ضبط می‌شود…")
             on_status("در حال ساختن MP4…")
             path = encode(url)
             files.append(path)
