@@ -124,11 +124,13 @@ FIXED = {                                       # looks that are not lists in th
     "notes": {"piano": ["پیانو"], "organ": ["ارگ"], "musicbox": ["جعبه‌موسیقی"], "marimba": ["ماریمبا"], "glass": [], "off": ["nonotes", "بی‌نت"]},
     "cutsound": {"auto": [], "knife": [], "glass": []},
     "edit": {"normal": [], "loop": ["seamless", "لوپ"]},
+    "format": {"normal": [], "vs": ["1vsn", "وی‌اس"]},
 }
-ORDER = ["fruit", "style", "camera", "speed", "knife", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit"]
+ORDER = ["fruit", "style", "camera", "speed", "knife", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit", "format"]
 DEFAULTS = dict(fruit="orange", style="burst", camera="front", speed="normal", knife="chef", backdrop="teal", board="walnut",
-                material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal")  # fits 1 GB of memory
+                material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal", format="normal")  # fits 1 GB of memory
 CUTS = [10, 20, 30]
+MAX_CUT, MAX_PARTS = 500, 6                     # cuts in one segment (tested up to 500), segments in a video
 options = {"fruit": {"orange": {"en": "Orange", "fa": "پرتقال"}}, "backdrop": {}, "board": {}, "knife": {}, "theme": {}}
 words = {}                                      # a word as typed -> (look, id)
 bycat = {}                                      # look -> {word: id}, for board=glass
@@ -178,7 +180,7 @@ def parse(text, base=None):
             n = int(tok)
             if n in (720, 1080):
                 picks["video"] = str(n)
-            elif 1 <= n <= 100:
+            elif 1 <= n <= MAX_CUT:
                 cuts.append(n)
             else:
                 unknown.append(tok)
@@ -192,7 +194,7 @@ def parse(text, base=None):
     if th:                                      # a theme is a board, a backdrop and maybe a fruit
         o.update({k: th[k] for k in ("board", "backdrop", "fruit") if th.get(k)})
     o.update(picks)
-    return o, cuts[:6] or o.pop("cuts", CUTS), unknown
+    return o, cuts[:MAX_PARTS] or o.pop("cuts", CUTS), unknown
 
 
 def name_of(cat, i):
@@ -207,7 +209,7 @@ def help_text():
             "lemon burst 10,20,30\n"
             "هندوانه دایس 5 15 50 top slow\n"
             "pumpkin halloween 20 720 lite\n\n"
-            "عددهای ۱ تا ۱۰۰ = تعداد برش هر بخش (تا ۶ بخش؛ پیش‌فرض 10,20,30)\n"
+            "عددهای ۱ تا ۵۰۰ = تعداد برش هر بخش (تا ۶ بخش)\n"
             "720 یا 1080 = اندازه‌ی ویدیو · lite = سریع‌تر و سبک‌تر · full = کامل\n"
             "هر چه نگویی از تنظیمات منو می‌آید\n"
             "اگر یک کلمه دو معنی دارد، کامل بنویس: material=glass\n\n"
@@ -222,7 +224,8 @@ def options_text():
                 "جنس: real, glass · اندازه‌ی میوه: small, medium, large\n"
                 "نت‌ها: piano, organ, musicbox, marimba, notes=glass, nonotes\n"
                 "صدای برش: cutsound=auto, cutsound=knife, cutsound=glass\n"
-                "نوع ادیت: loop (لوپ بی‌درز) · پیش‌فرض edit=normal")
+                "نوع ادیت: loop (لوپ بی‌درز) · پیش‌فرض edit=normal\n"
+                "قالب: vs (1 Cut VS N Cuts) · پیش‌فرض format=normal")
     return "\n\n".join(rows)
 
 
@@ -231,8 +234,10 @@ def options_text():
 CATS = [("fruit", "🍋 میوه"), ("style", "✂️ برش"), ("cuts", "🔢 تعداد"), ("camera", "🎥 دوربین"), ("speed", "⚡ سرعت"),
         ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("board", "🪵 تخته"),
         ("backdrop", "🖼 پس‌زمینه"), ("theme", "🎨 تم"), ("material", "💎 جنس"), ("size", "📏 میوه"),
-        ("video", "📐 ویدیو"), ("quality", "✨ کیفیت")]
-TITLES = {"cuts": "تعداد برش هر بخش\nبرای عدد دلخواه، عددها را تایپ کن (مثلاً 7,25,80): ویدیو با همان‌ها ساخته می‌شود.",
+        ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب")]
+TITLES = {"cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخش)\nیک سری آماده را بزن، یا با «ساختن دلخواه» عددها را دانه‌دانه بچین، یا «تایپ عدد».",
+          "format": "قالب ویدیو\n1 VS N: مثل ویدیوهای Blender؛ ۲ ثانیه از اوج بخش آخر در شروع، عنوان کوچک‌تر، بدون شمارش قطعه‌ها و بدون نت.\n"
+                    "این قالب کل ویدیو را در یک مرورگر می‌سازد: روی حافظه‌ی ۱ گیگ فقط با 720 و سبک.",
           "edit": "نوع ادیت\nلوپ بی‌درز: فریم آخر به فریم اول می‌رسد.",
           "notes": "سازی که با هر برش یک نت می‌زند", "cutsound": "صدای برش\nخودکار: برای میوه‌ی شیشه‌ای شیشه، وگرنه چاقو.",
           "theme": "تم: تخته و پس‌زمینه را با هم عوض می‌کند.", "video": "اندازه‌ی ویدیو\n1080 حدود ۱.۵ گیگ حافظه می‌خواهد.",
@@ -248,8 +253,12 @@ LABELS = {
     "size": {"s": "کوچک", "m": "متوسط", "l": "بزرگ"},
     "video": {"720": "720", "1080": "1080"},
     "quality": {"lite": "سبک", "full": "کامل"},
+    "format": {"normal": "معمولی", "vs": "1 VS N"},
 }
-CUT_PRESETS = ["10,20,30", "1,10,50", "10,50,100", "5,15,30", "1,5,10,50,100", "20", "50", "100"]
+CUT_PRESETS = ["10,20,30", "5,15,30", "1,10,50", "1,10,100", "10,50,100", "1,5,10,50,100", "1,10,100,200", "1,50,100,200",
+               "1,10,100,200,500", "50,100,200", "100,200,300", "1,100,500", "20", "50", "100", "200", "300", "500"]
+ADD = [1, 2, 3, 5, 8, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300, 500]   # the builder's number pad
+typing = set()                                  # chats whose next line of numbers is the menu's cut counts
 MENU_TEXT = "🎛 تنظیمات ویدیو\nهر گزینه را بزن و آخر «ساخت ویدیو» را."
 settings = {}                                   # chat -> its menu; a restart goes back to the defaults
 
@@ -281,7 +290,19 @@ def main_keys(s):
 
 def cat_keys(s, cat):
     keys = [{"text": ("✅ " if i == now(s, cat) else "") + label, "callback_data": f"s:{cat}:{i}"} for i, label in choices(cat)]
-    return grid(keys, 3) + [[{"text": "⬅️ برگشت", "callback_data": "m"}]]
+    extra = [[{"text": "🧩 ساختن دلخواه", "callback_data": "b:new"}, {"text": "⌨️ تایپ عدد", "callback_data": "t"}]] if cat == "cuts" else []
+    return grid(keys, 3) + extra + [[{"text": "⬅️ برگشت", "callback_data": "m"}]]
+
+
+def build_text(s):
+    series = " · ".join(map(str, s.get("draft", []))) or "—"
+    return f"🧩 ساختن سری دلخواه\nسری: {series}\nهر عدد را بزن تا به آخر سری برود (تا {MAX_PARTS} عدد)، بعد «ثبت»."
+
+
+def build_keys():
+    pad = grid([{"text": str(n), "callback_data": f"b:+{n}"} for n in ADD], 6)
+    return pad + [[{"text": "↩️ حذف آخری", "callback_data": "b:undo"}, {"text": "🗑 پاک", "callback_data": "b:clear"}],
+                  [{"text": "✅ ثبت", "callback_data": "b:ok"}, {"text": "⬅️ برگشت", "callback_data": "c:cuts"}]]
 
 
 def send_menu(chat):
@@ -312,7 +333,26 @@ def press(q):
         send_menu(chat)
     elif data == "go":
         enqueue(chat, None, dict(s), list(s["cuts"]))
+    elif data.startswith("b:"):                 # the series builder
+        d, op = s.setdefault("draft", []), data[2:]
+        if op == "new":
+            d.clear()
+        elif op.startswith("+") and int(op[1:]) in ADD and len(d) < MAX_PARTS:
+            d.append(int(op[1:]))
+        elif op == "undo" and d:
+            d.pop()
+        elif op == "clear":
+            d.clear()
+        elif op == "ok" and d:
+            s["cuts"] = list(d)
+            return show(MENU_TEXT, main_keys(s))
+        show(build_text(s), build_keys())
+    elif data == "t":
+        typing.add(chat)
+        show(f"⌨️ عددها را بفرست، مثلاً 7,25,80 یا 1 10 100 500\n(۱ تا {MAX_CUT}، تا {MAX_PARTS} عدد). در منو ثبت می‌شوند و ویدیو هنوز ساخته نمی‌شود.",
+             [[{"text": "⬅️ برگشت", "callback_data": "c:cuts"}]])
     elif data.startswith("c:") and data[2:] in dict(CATS):
+        typing.discard(chat)
         cat = data[2:]
         show(TITLES.get(cat, dict(CATS)[cat]), cat_keys(s, cat))
     elif data.startswith("s:"):
@@ -337,7 +377,7 @@ def make_video(browser, o, cuts, on_status, name, **extra):
     w, h = ("720", "1280") if o["video"] == "720" else ("1080", "1920")
     q = dict(cuts=",".join(map(str, cuts)), style=o["style"], camera=o["camera"], fruit=o["fruit"], speed=o["speed"],
              board=o["board"], backdrop=o["backdrop"], knife=o["knife"], material=o["material"], size=o["size"],
-             notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"],
+             notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"], **({"format": "vs"} if o.get("format") == "vs" else {}),
              quality="best" if o["quality"] == "full" else "battery", w=w, h=h, fps=30, name=name, defer=1,
              **{k: v for k, v in extra.items() if v is not None})
     page = browser.new_page(viewport={"width": 540, "height": 960})
@@ -424,10 +464,12 @@ def worker():
             ensure_server()
             # each segment in a browser of its own: memory never piles up from one segment into the next
             name = f"{o['fruit']}-{o['style']}-{'-'.join(map(str, cuts))}-{int(time.time())}"
-            for k, n in enumerate(cuts):
-                part = (lambda s, k=k: on_status(f"بخش {k + 1} از {len(cuts)} · {s.split(chr(10), 1)[-1]}")) if len(cuts) > 1 else on_status
-                final = k == len(cuts) - 1
-                url = with_browser(pw, lambda b: make_video(b, o, [n], part, name, append=1 if k else None, tail=None if final else 0))
+            # (the 1 VS N format is one take: its opening is cut from the last segment)
+            parts = [cuts] if o.get("format") == "vs" else [[n] for n in cuts]
+            for k, seg in enumerate(parts):
+                part = (lambda s, k=k: on_status(f"بخش {k + 1} از {len(parts)} · {s.split(chr(10), 1)[-1]}")) if len(parts) > 1 else on_status
+                final = k == len(parts) - 1
+                url = with_browser(pw, lambda b: make_video(b, o, seg, part, name, append=1 if k else None, tail=None if final else 0))
             on_status("در حال ساختن MP4…")
             path = encode(url)
             files.append(path)
@@ -438,7 +480,7 @@ def worker():
             w, h = (720, 1280) if o["video"] == "720" else (1080, 1920)
             tg_file("sendVideo", "video", send, chat_id=chat, reply_to_message_id=msg_id, supports_streaming=True,
                     width=w, height=h, duration=int(dur), reply_markup={"inline_keyboard": [[{"text": "🎛 منو", "callback_data": "n"}]]},
-                    caption=f"{name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))} cuts{' · loop' if o['edit'] == 'loop' else ''} · {(time.time() - started) / 60:.1f} min")
+                    caption=f"{name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))} cuts{' · loop' if o['edit'] == 'loop' else ''}{' · 1 VS N' if o.get('format') == 'vs' else ''} · {(time.time() - started) / 60:.1f} min")
             if note_id:
                 tg("deleteMessage", chat_id=chat, message_id=note_id)
         except Exception as e:                  # noqa: BLE001
@@ -506,6 +548,10 @@ def handle(msg):
     else:
         ready.wait(300)                         # just after a start the looks are still loading
         o, cuts, unknown = parse(text, menu_of(chat))
+        if chat in typing and not unknown and re.fullmatch(r"[\d\s,،;۰-۹٠-٩]+", text):
+            typing.discard(chat)
+            menu_of(chat)["cuts"] = list(cuts)
+            return send_menu(chat)
         if unknown:
             say(chat, "این‌ها را نشناختم: " + " ".join(unknown) + "\n/options فهرست همه‌چیز", msg["message_id"])
             return

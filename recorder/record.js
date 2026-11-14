@@ -134,8 +134,9 @@ async function frame() {
     const run = waiting; waiting = [];
     for (const cb of run) cb(vnow);
     b.globalAlpha = 1 / (j + 1);                        // right after the render, before the buffer clears
-    const sw = W / zoom, sh = H / zoom;                 // zooming on the fruit, 38 % down the frame
-    b.drawImage(gl, (W - sw) / 2, (H * 0.38) * (1 - 1 / zoom), sw, sh, 0, 0, W, H);
+    const cw = gl.width, ch = gl.height;                // the game's canvas: half the video's size at light quality
+    const sw = cw / zoom, sh = ch / zoom;               // zooming on the fruit, 38 % down the frame
+    b.drawImage(gl, (cw - sw) / 2, (ch * 0.38) * (1 - 1 / zoom), sw, sh, 0, 0, W, H);
   }
   g.drawImage(base, 0, 0);
   if (ringOn) {
