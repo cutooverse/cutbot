@@ -11,6 +11,7 @@ open port: it asks Telegram for messages (long polling).
 | `TG_TOKEN` | the bot's token from @BotFather |
 | `OWNER_ID` | your Telegram user id (several: comma-separated). Leave it empty at first: the bot answers with your id |
 | `GAME_REPO` | the game's public GitHub repository, `owner/name` |
+| `NVIDIA_API_KEY` | optional: captions (Instagram caption, YouTube title, description and tags) from build.nvidia.com; the rules are `captions.md`, the model `z-ai/glm-5.3-flash` (`CAPTION_MODEL` to change it) |
 
 ## Railway
 
@@ -34,4 +35,5 @@ segment (0.77 GB before), 0.63 GB with the helpers for a 5/10/40/75 video, 0.36 
 
 - `railway.json` Railway's settings: build the Dockerfile, one copy only (Telegram allows one reader), always restart
 - `bot.py` the bot
+- `captions.py` the caption writer, `captions.md` its rules (the Cutooverse caption guide)
 - `recorder/` a copy of the game's `_rec` recorder; `python sync_recorder.py` copies it again

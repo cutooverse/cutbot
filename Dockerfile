@@ -5,6 +5,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN python3 -m pip install --no-cache-dir --break-system-packages -r requirements.txt \
  || python3 -m pip install --no-cache-dir -r requirements.txt
-COPY bot.py ./
+COPY bot.py captions.py captions.md ./
 COPY recorder ./recorder
 CMD ["python3", "-u", "bot.py"]

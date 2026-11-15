@@ -6,6 +6,7 @@ Settings (on Railway: the service's Variables), never in this code:
   OWNER_ID    who may use it: your Telegram user id, or several, comma-separated. Left empty, the bot
               only answers each message with the sender's id, so you can find yours.
   GAME_REPO   the game's public GitHub repository: owner/name or its address
+  NVIDIA_API_KEY  optional: captions for Instagram and YouTube (captions.py)
 
 The game is fetched again before every video, so a push to the game shows up in the next one.
 """
@@ -24,6 +25,8 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
+
+import captions as C
 
 TOKEN = os.environ.get("TG_TOKEN", "").strip()
 OWNERS = {s.strip() for s in os.environ.get("OWNER_ID", "").split(",") if s.strip()}
@@ -128,7 +131,7 @@ FIXED = {                                       # looks that are not lists in th
 }
 ORDER = ["fruit", "style", "camera", "speed", "knife", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit", "format"]
 DEFAULTS = dict(fruit="orange", style="burst", camera="front", speed="normal", knife="chef", backdrop="teal", board="walnut",
-                material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal", format="normal")  # fits 1 GB of memory
+                material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal", format="normal", autocap="on")  # fits 1 GB of memory
 CUTS = [10, 20, 30]
 MAX_CUT, MAX_PARTS = 500, 6                     # cuts in one segment (tested up to 500), segments in a video
 options = {"fruit": {"orange": {"en": "Orange", "fa": "پرتقال"}}, "backdrop": {}, "board": {}, "knife": {}, "theme": {}}
@@ -234,8 +237,9 @@ def options_text():
 CATS = [("fruit", "🍋 میوه"), ("style", "✂️ برش"), ("cuts", "🔢 تعداد"), ("camera", "🎥 دوربین"), ("speed", "⚡ سرعت"),
         ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("board", "🪵 تخته"),
         ("backdrop", "🖼 پس‌زمینه"), ("theme", "🎨 تم"), ("material", "💎 جنس"), ("size", "📏 میوه"),
-        ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب")]
-TITLES = {"style": "نوع برش" + "\nرگبار: سبک ویدیوهای Blender؛ میوه در هوا، چاقوها دسته‌دسته از آن رد می‌شوند و به قطعه‌های واقعی می‌ریزد، با صداهای همان ویدیوها.",
+        ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب"), ("autocap", "📝 کپشن")]
+TITLES = {"autocap": "کپشن خودکار" + "\nبعد از هر ویدیو، کپشن اینستاگرام و تیتر، توضیح و تگ‌های یوتیوب از روی همان تنظیمات نوشته می‌شود.",
+          "style": "نوع برش" + "\nرگبار: سبک ویدیوهای Blender؛ میوه در هوا، چاقوها دسته‌دسته از آن رد می‌شوند و به قطعه‌های واقعی می‌ریزد، با صداهای همان ویدیوها.",
           "cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخش)\nیک سری آماده را بزن، یا با «ساختن دلخواه» عددها را دانه‌دانه بچین، یا «تایپ عدد».",
           "format": "قالب ویدیو\n1 VS N: مثل ویدیوهای Blender؛ ۲ ثانیه از اوج بخش آخر در شروع، عنوان کوچک‌تر، بدون شمارش قطعه‌ها و بدون نت.\n"
                     "این قالب کل ویدیو را در یک مرورگر می‌سازد.",
@@ -255,6 +259,7 @@ LABELS = {
     "video": {"720": "720", "1080": "1080"},
     "quality": {"lite": "سبک", "full": "کامل"},
     "format": {"normal": "معمولی", "vs": "1 VS N"},
+    "autocap": {"on": "خودکار", "off": "خاموش"},
 }
 CUT_PRESETS = ["10,20,30", "5,15,30", "1,10,50", "1,10,100", "10,50,100", "1,5,10,50,100", "1,10,100,200", "1,50,100,200",
                "1,10,100,200,500", "50,100,200", "100,200,300", "1,100,500", "20", "50", "100", "200", "300", "500"]
@@ -286,7 +291,7 @@ def main_keys(s):
     def value(cat):
         return dict(choices(cat)).get(now(s, cat), now(s, cat).replace(",", "·")) or "انتخاب"
     keys = grid([{"text": f"{title}: {value(cat)}", "callback_data": f"c:{cat}"} for cat, title in CATS], 2)
-    return keys + [[{"text": "▶️ ساخت ویدیو", "callback_data": "go"}]]
+    return keys + [[{"text": "📝 کپشن‌ساز", "callback_data": "cap:new"}], [{"text": "▶️ ساخت ویدیو", "callback_data": "go"}]]
 
 
 def cat_keys(s, cat):
@@ -311,6 +316,63 @@ def send_menu(chat):
     tg("sendMessage", chat_id=chat, text=MENU_TEXT, reply_markup={"inline_keyboard": main_keys(menu_of(chat))})
 
 
+CAPS = {}                                       # caption id -> its subject, tone and the message it is in
+captioning = set()                              # chats whose next line is a subject for the caption writer
+told_no_key = set()
+
+
+def start_caption(chat, subject, facts="", reply_to=None, auto=False):
+    """A caption message for `subject`, written in the background."""
+    if not C.KEY:
+        if not auto or chat not in told_no_key:
+            told_no_key.add(chat)
+            say(chat, "برای کپشن، متغیر NVIDIA_API_KEY را در Railway بگذار (کلید build.nvidia.com).", reply_to)
+        return
+    note = say(chat, f"📝 کپشن «{subject}» در حال نوشتن است…", reply_to)
+    if not note:
+        return
+    cid = str(len(CAPS) + 1)
+    CAPS[cid] = dict(chat=chat, subject=subject, facts=facts, tone=0, avoid=[], msg=note["message_id"], html="")
+    threading.Thread(target=run_caption, args=(cid,), daemon=True).start()
+
+
+def run_caption(cid):
+    c = CAPS[cid]
+    edit = lambda text, keys=None, **kw: tg("editMessageText", chat_id=c["chat"], message_id=c["msg"], text=text, reply_markup=keys and {"inline_keyboard": keys}, **kw)
+    try:
+        out = C.write(c["subject"], c["facts"], c["tone"], c["avoid"])
+    except Exception as e:                      # noqa: BLE001
+        log("caption:", e)
+        return edit(f"❌ کپشن نوشته نشد: {str(e)[:300]}", [[{"text": "🔄 دوباره", "callback_data": f"cap:again:{cid}"}]])
+    c["avoid"] += C.openers(out)
+    c["html"] = C.as_html(out, c["subject"], c["tone"])
+    edit(c["html"], [[{"text": "🔄 لحن دیگر", "callback_data": f"cap:again:{cid}"}, {"text": "✅ تایید", "callback_data": f"cap:ok:{cid}"}]],
+         parse_mode="HTML", disable_web_page_preview=True)
+
+
+def video_facts(o, cuts):
+    """The subject and what the video shows, in English, for an automatic caption."""
+    en = lambda cat, i: (options.get(cat, {}).get(i, {}).get("en") or i).lower()
+    subject = ("glass " if o["material"] == "glass" else "") + en("fruit", o["fruit"])
+    style = {"burst": "the fruit floats in the air and knives fly through it, then it bursts into pieces",
+             "flurry": "the fruit floats in the air, many knives slice through it at once and it falls apart into real pieces",
+             "dice": "cut across, then along, then flat, into little cubes",
+             "free": "chopped again and again on the board"}.get(o["style"], o["style"])
+    facts = [f"A 3D render: a {subject} on a {en('board', o['board'])} cutting board, {en('backdrop', o['backdrop'])} backdrop, "
+             f"a {en('knife', o['knife'])} knife. {style.capitalize()}.",
+             "The video goes " + ", then ".join(f"{n} cut" + ("s" if n > 1 else "") for n in cuts)
+             + " (a fresh fruit each time; a counter shows how many pieces it ends in)."]
+    if o["material"] == "glass":
+        facts.append("The fruit is glass: clear, shiny, light passes through it, and it breaks with a glassy crack.")
+    if o.get("format") == "vs":
+        facts.append(f"It is a '1 Cut VS {cuts[-1]} Cuts' comparison short.")
+    if o["edit"] == "loop":
+        facts.append("It loops seamlessly: the end runs straight into the start.")
+    if o["notes"] != "off":
+        facts.append(f"Every cut plays the next note of a {o['notes']} melody.")
+    return subject, "\n".join(facts)
+
+
 def enqueue(chat, msg_id, o, cuts):
     ahead = jobs.unfinished_tasks
     jobs.put((chat, msg_id, o, cuts))
@@ -325,13 +387,28 @@ def press(q):
         tg("answerCallbackQuery", callback_query_id=q["id"])
         return log("ignored a button from", user)
     s, data = menu_of(chat), q.get("data", "")
-    tg("answerCallbackQuery", callback_query_id=q["id"], text="ساخته می‌شود ⏳" if data == "go" else None)
+    tg("answerCallbackQuery", callback_query_id=q["id"], text="ساخته می‌شود ⏳" if data == "go" else "✅ تایید شد" if data.startswith("cap:ok") else None)
 
     def show(text, keys):
         tg("editMessageText", chat_id=chat, message_id=q["message"]["message_id"], text=text, reply_markup={"inline_keyboard": keys})
 
     if data == "n":                             # under a finished video, which cannot turn into a menu
         send_menu(chat)
+    elif data == "cap:new":
+        captioning.add(chat)
+        show("📝 کپشن‌ساز\nاسم میوه، سبزی یا هر چیزی را بفرست، مثلاً strawberry یا glass kiwi یا توت‌فرنگی شیشه‌ای.\n"
+             "برای «فقط اینستاگرام» یا هر خواسته‌ی دیگری، کنارش بنویس.", [[{"text": "⬅️ برگشت", "callback_data": "m"}]])
+    elif data.startswith("cap:"):
+        _, op, cid = (data.split(":") + ["", ""])[:3]
+        c = CAPS.get(cid)
+        if not c:
+            return
+        if op == "again":
+            c["tone"] += 1
+            tg("editMessageText", chat_id=chat, message_id=c["msg"], text=f"📝 کپشن «{c['subject']}» با لحن «{C.TONES[c['tone'] % len(C.TONES)][0]}»…")
+            threading.Thread(target=run_caption, args=(cid,), daemon=True).start()
+        elif op == "ok" and c["html"]:
+            tg("editMessageText", chat_id=chat, message_id=c["msg"], text=c["html"].replace("📝", "✅", 1), parse_mode="HTML", disable_web_page_preview=True)
     elif data == "go":
         enqueue(chat, None, dict(s), list(s["cuts"]))
     elif data.startswith("b:"):                 # the series builder
@@ -353,7 +430,7 @@ def press(q):
         show(f"⌨️ عددها را بفرست، مثلاً 7,25,80 یا 1 10 100 500\n(۱ تا {MAX_CUT}، تا {MAX_PARTS} عدد). در منو ثبت می‌شوند و ویدیو هنوز ساخته نمی‌شود.",
              [[{"text": "⬅️ برگشت", "callback_data": "c:cuts"}]])
     elif data.startswith("c:") and data[2:] in dict(CATS):
-        typing.discard(chat)
+        typing.discard(chat); captioning.discard(chat)
         cat = data[2:]
         show(TITLES.get(cat, dict(CATS)[cat]), cat_keys(s, cat))
     elif data.startswith("s:"):
@@ -512,11 +589,13 @@ def worker():
             files.append(send)
             on_status(f"در حال فرستادن ({send.stat().st_size / 1e6:.0f} MB)…")
             w, h = (720, 1280) if o["video"] == "720" else (1080, 1920)
-            tg_file("sendVideo", "video", send, chat_id=chat, reply_to_message_id=msg_id, supports_streaming=True,
+            sent = tg_file("sendVideo", "video", send, chat_id=chat, reply_to_message_id=msg_id, supports_streaming=True,
                     width=w, height=h, duration=int(dur), reply_markup={"inline_keyboard": [[{"text": "🎛 منو", "callback_data": "n"}]]},
                     caption=f"{name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))} cuts{' · loop' if o['edit'] == 'loop' else ''}{' · 1 VS N' if o.get('format') == 'vs' else ''} · {(time.time() - started) / 60:.1f} min")
             if note_id:
                 tg("deleteMessage", chat_id=chat, message_id=note_id)
+            if o.get("autocap", "on") == "on":
+                start_caption(chat, *video_facts(o, cuts), reply_to=(sent or {}).get("message_id"), auto=True)
         except Exception as e:                  # noqa: BLE001
             log(traceback.format_exc())
             hint = "\n\nحافظه‌ی سرور کم آمد: اندازه‌ی ویدیو را 720 و کیفیت را سبک بگذار، یا حافظه‌ی سرور را بیشتر کن." if "out of memory" in str(e) else ""
@@ -577,8 +656,18 @@ def handle(msg):
         say(chat, help_text())
     elif cmd == "/options":
         say(chat, options_text())
+    elif cmd == "/caption":
+        subject = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+        if subject:
+            start_caption(chat, subject, reply_to=msg["message_id"])
+        else:
+            captioning.add(chat)
+            say(chat, "اسم میوه یا شی را بفرست، مثلاً glass kiwi.")
     elif cmd.startswith("/"):
         say(chat, help_text())
+    elif chat in captioning:                    # after "کپشن‌ساز": this line is the subject
+        captioning.discard(chat)
+        start_caption(chat, text, reply_to=msg["message_id"])
     else:
         ready.wait(300)                         # just after a start the looks are still loading
         o, cuts, unknown = parse(text, menu_of(chat))
@@ -601,7 +690,8 @@ def main():
     me = tg("getMe")
     log("bot:", me and me.get("username"), "owners:", len(OWNERS))
     tg("setMyCommands", commands=[{"command": "menu", "description": "منوی ساخت ویدیو"}, {"command": "help", "description": "راهنمای نوشتنی"},
-                                  {"command": "options", "description": "فهرست میوه‌ها و ظاهرها"}])
+                                  {"command": "options", "description": "فهرست میوه‌ها و ظاهرها"},
+                                  {"command": "caption", "description": "کپشن اینستاگرام و یوتیوب برای یک میوه یا شی"}])
     for owner in OWNERS:                        # also how you learn a video died with the server (out of memory)
         say(owner, "✅ ربات روشن شد: /menu\nاگر ویدیویی در حال ساخت بود قطع شده است؛ دوباره بفرست.")
     offset = None
