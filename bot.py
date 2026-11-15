@@ -115,7 +115,7 @@ def ensure_server():
 
 
 FIXED = {                                       # looks that are not lists in the game's code
-    "style": {"burst": ["برست", "بریست", "انفجاری"], "dice": ["دایس", "مکعبی"], "free": ["آزاد"]},
+    "style": {"burst": ["برست", "بریست", "انفجاری"], "dice": ["دایس", "مکعبی"], "free": ["آزاد"], "flurry": ["رگبار", "فلاری"]},
     "camera": {"front": ["روبرو", "جلو"], "top": ["بالا"], "close": ["نزدیک"]},
     "speed": {"slow": ["آهسته", "کند"], "normal": ["معمولی"], "fast": ["تند", "سریع"]},
     "material": {"real": ["واقعی"], "glass": ["شیشه‌ای"]},
@@ -220,7 +220,7 @@ def options_text():
     rows = []
     for cat, title in [("fruit", "میوه"), ("knife", "چاقو"), ("board", "تخته (board=)"), ("backdrop", "پس‌زمینه"), ("theme", "تم")]:
         rows.append(f"{title}:\n" + ", ".join(f"{i} ({name_of(cat, i)})" for i in options.get(cat, {})))
-    rows.append("نوع برش: burst, dice, free\nدوربین: front, top, close\nسرعت: slow, normal, fast\n"
+    rows.append("نوع برش: burst, flurry (رگبار), dice, free\nدوربین: front, top, close\nسرعت: slow, normal, fast\n"
                 "جنس: real, glass · اندازه‌ی میوه: small, medium, large\n"
                 "نت‌ها: piano, organ, musicbox, marimba, notes=glass, nonotes\n"
                 "صدای برش: cutsound=auto, cutsound=knife, cutsound=glass\n"
@@ -235,7 +235,8 @@ CATS = [("fruit", "🍋 میوه"), ("style", "✂️ برش"), ("cuts", "🔢 �
         ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("board", "🪵 تخته"),
         ("backdrop", "🖼 پس‌زمینه"), ("theme", "🎨 تم"), ("material", "💎 جنس"), ("size", "📏 میوه"),
         ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب")]
-TITLES = {"cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخش)\nیک سری آماده را بزن، یا با «ساختن دلخواه» عددها را دانه‌دانه بچین، یا «تایپ عدد».",
+TITLES = {"style": "نوع برش" + "\nرگبار: سبک ویدیوهای Blender؛ میوه در هوا، چاقوها دسته‌دسته از آن رد می‌شوند و به قطعه‌های واقعی می‌ریزد، با صداهای همان ویدیوها.",
+          "cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخش)\nیک سری آماده را بزن، یا با «ساختن دلخواه» عددها را دانه‌دانه بچین، یا «تایپ عدد».",
           "format": "قالب ویدیو\n1 VS N: مثل ویدیوهای Blender؛ ۲ ثانیه از اوج بخش آخر در شروع، عنوان کوچک‌تر، بدون شمارش قطعه‌ها و بدون نت.\n"
                     "این قالب کل ویدیو را در یک مرورگر می‌سازد.",
           "edit": "نوع ادیت\nلوپ بی‌درز: فریم آخر به فریم اول می‌رسد.",
@@ -243,7 +244,7 @@ TITLES = {"cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخ�
           "theme": "تم: تخته و پس‌زمینه را با هم عوض می‌کند.", "video": "اندازه‌ی ویدیو\n1080 کندتر ساخته می‌شود.",
           "quality": "کیفیت\nکامل: همان ظاهر سایت روی کامپیوتر؛ هر فریم در ۴ تکه ساخته می‌شود تا در حافظه‌ی کم جا شود، پس چند برابر کندتر است."}
 LABELS = {
-    "style": {"burst": "برست", "dice": "دایس", "free": "آزاد"},
+    "style": {"burst": "برست", "flurry": "رگبار", "dice": "دایس", "free": "آزاد"},
     "camera": {"front": "روبرو", "top": "بالا", "close": "نزدیک"},
     "speed": {"slow": "آهسته", "normal": "معمولی", "fast": "تند"},
     "edit": {"normal": "معمولی", "loop": "لوپ"},
