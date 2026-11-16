@@ -11,7 +11,7 @@ open port: it asks Telegram for messages (long polling).
 | `TG_TOKEN` | the bot's token from @BotFather |
 | `OWNER_ID` | your Telegram user id (several: comma-separated). Leave it empty at first: the bot answers with your id |
 | `GAME_REPO` | the game's public GitHub repository, `owner/name` |
-| `NVIDIA_API_KEY` | optional: captions (Instagram caption, YouTube title, description and tags) from build.nvidia.com; the rules are `captions.md`, the model `z-ai/glm-5.3-flash` (`CAPTION_MODEL` to change it) |
+| `NVIDIA_API_KEY` | optional: captions (Instagram caption, YouTube title, description and tags) from build.nvidia.com; the rules are `captions.md`; the models are tried in order, `nvidia/nemotron-3-ultra-550b-a55b` then `z-ai/glm-5.3-flash` (`CAPTION_MODELS` to change them); a model that says nothing for 90 s is given up |
 
 ## Railway
 
