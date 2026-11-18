@@ -492,13 +492,14 @@ def make_video(browser, o, cuts, on_status, name, **extra):
             if done:
                 break
             status = page.evaluate("(document.getElementById('rec') || {}).textContent || ''")
-            if status != seen:
-                seen, changed = status, time.time()
-            if time.time() - changed > 600:     # nothing new for 10 minutes: the page is stuck
+            beat = page.evaluate("String(window.__recBeat ?? '')")   # each frame made, each second of sound rendered
+            if (status, beat) != seen:
+                seen, changed = (status, beat), time.time()
+            if time.time() - changed > 900:     # not one frame (or second of sound) in 15 minutes: the page is stuck
                 done = {"error": "stuck at: " + status + (" / " + errors[-1] if errors else "")}
                 break
-            if time.time() - told > 20:
-                on_status(status)
+            if time.time() - told > 20:         # the frame count goes on after the chopping: the fall, the burst
+                on_status(status.split("  (frame")[0] + (f"  (frame {beat})" if beat.isdigit() else ""))
                 told = time.time()
             page.wait_for_timeout(3000)
     finally:

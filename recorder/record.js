@@ -179,6 +179,7 @@ async function frame() {
   preview.getContext("2d").drawImage(out, 0, 0, preview.width, preview.height);
   const jpg = await new Promise(r => out.toBlob(r, "image/jpeg", 0.92));
   await fetch(`/rec/frame?i=${fi++}`, { method: "POST", body: jpg });
+  window.__recBeat = fi;                               // a heartbeat: a slow frame (a burst on one CPU) is not a stuck page
 }
 const frames = async s => { for (let i = 0; i < Math.round(s * FPS); i++) await frame(); };
 
@@ -262,6 +263,9 @@ for (const e of heard) {
   if (VS && (e.k === "tick" || e.k === "win")) continue;  // the game's menu and new-best sounds
   if (HOOK && e.t >= hookAt && e.t < hookAt + hookS) { S.startAt(e.t - hookAt); play[e.k](...e.a); }
   S.startAt(e.t + hookS); play[e.k](...e.a);
+}
+for (let t = 1; t < dur; t++) {                        // the sound's progress, a second at a time: also a heartbeat
+  oc.suspend(t).then(() => { window.__recBeat = `sound ${t}`; say(`${NAME}\nrendering the sound… ${t} / ${Math.ceil(dur)} s`); oc.resume(); });
 }
 const buf = await oc.startRendering();
 await post("/rec/audio", wav(buf));
