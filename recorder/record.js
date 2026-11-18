@@ -8,6 +8,9 @@
 //   no piece count, a zoom out into the first segment, no notes unless asked. blur=3: motion blur (3 renders a frame)
 //   append=1: go on with the take of the same name (one segment per browser, for a server short of memory);
 //   tail=0: no empty moment at the end (a segment that is not the last)
+//   part=first|mid|last (format=vs in parts): the first keeps the opening's frames free, the last makes the
+//   opening from its own frenzy and writes it there, with its sound apart (hook.wav, mixed in by the server);
+//   series=25,75: the whole take's counts, for the opening's "25 Cuts VS 75 Cuts"
 //   tiles=2: each frame drawn as 2 x 2 tiles on a canvas a quarter of the size, then put together: the same
 //   picture for much less memory and more time (a server with 1 GB)
 
@@ -116,7 +119,9 @@ document.body.appendChild(preview);
 
 const post = (path, body) => fetch(path, { method: "POST", body }).then(r => r.json());
 const HOOK = VS && P.get("edit") !== "loop" ? 2 * FPS : 0;  // the opening's frames, filled in when the last segment is done
-let fi = HOOK, title = "", showCount = false, zoomFrom = -1;
+const PART = P.get("part") || "only";                 // one take, or one segment of a take made in parts
+const FIRST = PART === "only" || PART === "first", LAST = PART === "only" || PART === "last";
+let fi = FIRST ? HOOK : 0, title = "", showCount = false, zoomFrom = -1;
 let ring = null, ringOn = false;                       // the last segment's picture without titles, for the opening
 const base = document.createElement("canvas"); base.width = W; base.height = H;
 const b = base.getContext("2d");
@@ -208,11 +213,11 @@ for (const [i, n] of CUTS.entries()) {
   // WebGL picture and 17 fruits' shaders), memory a small server does not have
   if (i) setCuts(n);                                   // also starts a fresh fruit
   title = VS ? cutLabel(n) : `${n} Cuts`; showCount = false;
-  zoomFrom = VS && i === 0 ? fi : -1;
+  zoomFrom = VS && i === 0 && FIRST ? fi : -1;
   say(`${NAME}\n${title}: getting ready`);
   await frames(VS ? (i === 0 ? 0.5 : 0.15) : 0.8);
   const last = i === CUTS.length - 1;
-  if (HOOK && last) { ring = []; ringOn = true; }
+  if (HOOK && last && LAST) { ring = []; ringOn = true; }
   press("pointerdown");
   let guard = 0;
   const made = () => Number($("chopBig").textContent.split("/")[0].replace(/[^\d]/g, ""));
@@ -240,17 +245,18 @@ if (!LOOP && !VS && P.get("tail") !== "0") { title = ""; await frames(0.4); }  /
 
 // the opening: the end of the last segment's frenzy, its sound first, with the VS card
 let hookAt = 0;
-if (HOOK) {
+if (HOOK && LAST) {
   say(`${NAME}
 the opening…`);
   hookAt = ring[0].t - 1 / FPS;
-  const first = cutLabel(CUTS[0]), top = cutLabel(CUTS[CUTS.length - 1]);
+  const SERIES = (P.get("series") || CUTS.join(",")).split(",").map(Number);   // a part knows only its own count
+  const first = cutLabel(SERIES[0]), top = cutLabel(SERIES[SERIES.length - 1]);
   for (const [k, f] of ring.entries()) {
     const bmp = await createImageBitmap(f.jpg);
     g.drawImage(bmp, 0, 0); bmp.close();
     caption([[first, "#ffffff"], ["VS", "#ffffff"], k < HOOK / 2 ? ["...", "#ffffff"] : [top, "#e82828"]]);
     const jpg = await new Promise(r => out.toBlob(r, "image/jpeg", 0.92));
-    await fetch(`/rec/frame?i=${k}`, { method: "POST", body: jpg });
+    await fetch(`/rec/frame?i=${k}&abs=1`, { method: "POST", body: jpg });   // the video's first frames, whatever part this is
   }
 }
 
@@ -258,16 +264,23 @@ say(`${NAME}\nrendering the sound…`);
 const dur = fi / FPS, SR = 48000;
 const oc = new OfflineAudioContext(2, Math.ceil(SR * dur), SR);
 S.useOffline(oc);
-const hookS = HOOK / FPS;
+const hookS = HOOK / FPS, lead = FIRST ? hookS : 0;   // the first part's picture starts after the opening
+const inHook = e => HOOK && LAST && e.t >= hookAt && e.t < hookAt + hookS;
 for (const e of heard) {
   if (VS && (e.k === "tick" || e.k === "win")) continue;  // the game's menu and new-best sounds
-  if (HOOK && e.t >= hookAt && e.t < hookAt + hookS) { S.startAt(e.t - hookAt); play[e.k](...e.a); }
-  S.startAt(e.t + hookS); play[e.k](...e.a);
+  if (inHook(e) && FIRST) { S.startAt(e.t - hookAt); play[e.k](...e.a); }
+  S.startAt(e.t + lead); play[e.k](...e.a);
 }
 for (let t = 1; t < dur; t++) {                        // the sound's progress, a second at a time: also a heartbeat
   oc.suspend(t).then(() => { window.__recBeat = `sound ${t}`; say(`${NAME}\nrendering the sound… ${t} / ${Math.ceil(dur)} s`); oc.resume(); });
 }
 const buf = await oc.startRendering();
+if (HOOK && LAST && !FIRST) {                          // made in parts: the opening's sound goes to the start of the take
+  const hc = new OfflineAudioContext(2, Math.ceil(SR * hookS), SR);
+  S.useOffline(hc);
+  for (const e of heard) if (inHook(e) && !(e.k === "tick" || e.k === "win")) { S.startAt(e.t - hookAt); play[e.k](...e.a); }
+  await post("/rec/audio?hook=1", wav(await hc.startRendering()));
+}
 await post("/rec/audio", wav(buf));
 
 say(`${NAME}\nencoding the video…`);

@@ -37,7 +37,8 @@ GAME = Path(os.environ.get("GAME_DIR", "/tmp/game"))
 VIDEOS = Path(os.environ.get("VIDEO_DIR", "/tmp/videos"))
 PORT = int(os.environ.get("REC_PORT", 8770))
 TG_LIMIT = 49 * 1024 * 1024                     # a bot may send files up to 50 MB
-CHROME = ["--disable-dev-shm-usage", "--ignore-gpu-blocklist", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+CHROME = ["--disable-dev-shm-usage", "--ignore-gpu-blocklist", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
+          "--disable-accelerated-2d-canvas"]   # 2D canvases (the frames, the 1 VS N opening) in the page, not the GPU process: 0.3 GB less
 
 
 def log(*a):
@@ -568,14 +569,15 @@ def worker():
             ensure_server()
             # each segment in a browser of its own: memory never piles up from one segment into the next
             name = f"{o['fruit']}-{o['style']}-{'-'.join(map(str, cuts))}-{int(time.time())}"
-            # (the 1 VS N format is one take: its opening is cut from the last segment)
-            parts = [cuts] if o.get("format") == "vs" else [[n] for n in cuts]
+            parts = [[n] for n in cuts]          # 1 VS N too: its last part writes the opening at the start
             for k, seg in enumerate(parts):
                 part = (lambda s, k=k: on_status(f"بخش {k + 1} از {len(parts)} · {s.split(chr(10), 1)[-1]}")) if len(parts) > 1 else on_status
                 final = k == len(parts) - 1
+                where = "only" if len(parts) == 1 else "first" if k == 0 else "last" if final else "mid"
                 for attempt in (1, 2):                  # a part that fails is recorded once more, in a new browser
                     try:
-                        url = with_browser(pw, lambda b: make_video(b, o, seg, part, name, append=1 if k else None, tail=None if final else 0))
+                        url = with_browser(pw, lambda b: make_video(b, o, seg, part, name, append=1 if k else None, tail=None if final else 0, part=where,
+                                                                   series=",".join(map(str, cuts))))
                         break
                     except Exception as e:              # noqa: BLE001
                         if attempt == 2:

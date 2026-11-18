@@ -39,17 +39,25 @@ def ffmpeg():
 
 
 def join_sound(d):
-    """The sound of each part of a take (audio_<first frame>.wav), one after another -> audio.wav."""
+    """The sound of each part of a take (audio_<first frame>.wav), one after another -> audio.wav; a part's
+    hook.wav (the 1 VS N opening, made by the last part) is mixed in at the very start."""
     parts = sorted(d.glob("audio_*.wav"))
     if not parts:
         return
     with wave.open(str(parts[0])) as w:
         params = w.getparams()
+    pcm = array("h")
+    for p in parts:
+        with wave.open(str(p)) as w:
+            pcm.frombytes(w.readframes(w.getnframes()))
+    if (d / "hook.wav").exists():
+        with wave.open(str(d / "hook.wav")) as w:
+            hook = array("h", w.readframes(w.getnframes()))
+        for i in range(min(len(hook), len(pcm))):
+            pcm[i] = max(-32768, min(32767, pcm[i] + hook[i]))
     with wave.open(str(d / "audio.wav"), "wb") as out:
         out.setparams(params)
-        for p in parts:
-            with wave.open(str(p)) as w:
-                out.writeframes(w.readframes(w.getnframes()))
+        out.writeframes(pcm.tobytes())
 
 
 def rotate_take(d, seam, fps):
@@ -122,6 +130,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 for f in d.glob("audio_*.wav"):
                     if int(f.stem.split("_")[1]) >= offset:
                         f.unlink()
+                (d / "hook.wav").unlink(missing_ok=True)
             else:
                 shutil.rmtree(d, ignore_errors=True)
                 (d / "frames").mkdir(parents=True)
@@ -132,11 +141,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.reply(400, {"error": "no take started"})
         d = take["dir"]
         if u.path == "/rec/frame":
-            (d / "frames" / f"{int(q['i']) + take['offset']:05d}.jpg").write_bytes(data)
+            at = int(q["i"]) + (0 if q.get("abs") else take["offset"])    # abs: the 1 VS N opening, at the very start
+            (d / "frames" / f"{at:05d}.jpg").write_bytes(data)
             return self.reply(200, {"ok": True})
         if u.path == "/rec/audio":
+            if q.get("hook"):
+                (d / "hook.wav").write_bytes(data)
+                return self.reply(200, {"ok": True})
             (d / f"audio_{take['offset']:05d}.wav").write_bytes(data)
-            (d / "kept").write_text(str(len(list((d / "frames").glob("*.jpg")))))   # the sound comes last: this part is whole
+            # the sound comes last: this part is whole; the next one starts after its last frame (a first part
+            # of a 1 VS N take begins after the opening's frames, which the last part writes)
+            (d / "kept").write_text(str(1 + max((int(f.stem) for f in (d / "frames").glob("*.jpg")), default=-1)))
             return self.reply(200, {"ok": True})
         if u.path == "/rec/done":
             fps = q.get("fps", "30")
