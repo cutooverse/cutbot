@@ -13,6 +13,7 @@ The game is fetched again before every video, so a push to the game shows up in 
 import json
 import os
 import queue
+import random
 import re
 import shutil
 import subprocess
@@ -292,7 +293,8 @@ def main_keys(s):
     def value(cat):
         return dict(choices(cat)).get(now(s, cat), now(s, cat).replace(",", "·")) or "انتخاب"
     keys = grid([{"text": f"{title}: {value(cat)}", "callback_data": f"c:{cat}"} for cat, title in CATS], 2)
-    return keys + [[{"text": "📝 کپشن‌ساز", "callback_data": "cap:new"}], [{"text": "▶️ ساخت ویدیو", "callback_data": "go"}]]
+    return keys + [[{"text": "🎲 رندوم", "callback_data": "rnd"}, {"text": "🎲 ساخت رندوم", "callback_data": "rnd:go"}],
+                   [{"text": "📝 کپشن‌ساز", "callback_data": "cap:new"}], [{"text": "▶️ ساخت ویدیو", "callback_data": "go"}]]
 
 
 def cat_keys(s, cat):
@@ -333,7 +335,7 @@ def start_caption(chat, subject, facts="", reply_to=None, auto=False):
     if not note:
         return
     cid = str(len(CAPS) + 1)
-    CAPS[cid] = dict(chat=chat, subject=subject, facts=facts, tone=0, avoid=[], msg=note["message_id"], html="")
+    CAPS[cid] = dict(chat=chat, subject=subject, facts=facts, tone=None, avoid=[], msg=note["message_id"], html="")
     threading.Thread(target=run_caption, args=(cid,), daemon=True).start()
 
 
@@ -346,7 +348,8 @@ def run_caption(cid):
         log("caption:", e)
         return edit(f"❌ کپشن نوشته نشد: {str(e)[:300]}", [[{"text": "🔄 دوباره", "callback_data": f"cap:again:{cid}"}]])
     c["avoid"] += C.openers(out)
-    c["html"] = C.as_html(out, c["subject"], c["tone"])
+    c["tone"] = out["tone"]
+    c["html"] = C.as_html(out, c["subject"])
     edit(c["html"], [[{"text": "🔄 لحن دیگر", "callback_data": f"cap:again:{cid}"}, {"text": "✅ تایید", "callback_data": f"cap:ok:{cid}"}]],
          parse_mode="HTML", disable_web_page_preview=True)
 
@@ -374,6 +377,39 @@ def video_facts(o, cuts):
     return subject, "\n".join(facts)
 
 
+# --- random settings: everything drawn, the picture at its best (1080, full quality); series that a 1-CPU
+# server makes in under an hour (Flurry's real pieces are the slowest, so its counts stay lower)
+RANDOM_SERIES = {"normal": ["1,10,100", "1,10,50,100", "5,25,100", "10,50,150", "1,20,200", "3,30,300", "1,5,50,150", "10,100,250"],
+                 "flurry": ["1,10,50", "5,25,75", "1,20,100", "10,40,120", "3,15,60"],
+                 "vs": ["1,100", "1,50", "5,150", "1,200", "10,250", "1,75"], "vs-flurry": ["1,50", "1,75", "5,100", "1,120"]}
+
+
+def randomize(s):
+    """New random looks in the menu `s`; its automatic caption switch stays as it is."""
+    pick = lambda cat: random.choice([i for i, _ in choices(cat)])
+    s.update(fruit=pick("fruit"), style=random.choice(["burst", "flurry", "flurry", "dice", "burst"]),
+             camera=random.choice(["front", "front", "top", "close"]), speed=random.choice(["normal", "normal", "slow", "fast"]),
+             knife=pick("knife"), board=pick("board"), backdrop=pick("backdrop"),
+             material=random.choice(["real"] * 4 + ["glass"]), size=random.choice(["m", "m", "l", "s"]),
+             notes=random.choice(["piano", "organ", "musicbox", "marimba", "glass", "off"]), cutsound="auto",
+             edit=random.choice(["normal"] * 3 + ["loop"]), format=random.choice(["normal"] * 2 + ["vs"]),
+             video="1080", quality="full")
+    if s["style"] == "free":
+        s["style"] = "burst"
+    kind = ("vs-" if s["format"] == "vs" else "") + ("flurry" if s["style"] == "flurry" else "normal")
+    s["cuts"] = [int(n) for n in random.choice(RANDOM_SERIES.get(kind, RANDOM_SERIES["vs"] if s["format"] == "vs" else RANDOM_SERIES["normal"])).split(",")]
+    if s["format"] == "vs" and s["edit"] == "loop":   # the 1 VS N opening needs the normal edit
+        s["edit"] = "normal"
+    return s
+
+
+def summary(s):
+    label = lambda cat: dict(choices(cat)).get(s[cat], s[cat])
+    return (f"🎲 {label('fruit')}{' شیشه‌ای' if s['material'] == 'glass' else ''} · {label('style')} · {' / '.join(map(str, s['cuts']))} برش\n"
+            f"{label('camera')} · {label('backdrop')} · {label('board')} · {label('knife')} · نت: {label('notes')}"
+            f"{' · لوپ' if s['edit'] == 'loop' else ''}{' · 1 VS N' if s['format'] == 'vs' else ''} · 1080 کامل")
+
+
 def enqueue(chat, msg_id, o, cuts):
     ahead = jobs.unfinished_tasks
     jobs.put((chat, msg_id, o, cuts))
@@ -388,7 +424,7 @@ def press(q):
         tg("answerCallbackQuery", callback_query_id=q["id"])
         return log("ignored a button from", user)
     s, data = menu_of(chat), q.get("data", "")
-    tg("answerCallbackQuery", callback_query_id=q["id"], text="ساخته می‌شود ⏳" if data == "go" else "✅ تایید شد" if data.startswith("cap:ok") else None)
+    tg("answerCallbackQuery", callback_query_id=q["id"], text="ساخته می‌شود ⏳" if data in ("go", "rnd:go") else "✅ تایید شد" if data.startswith("cap:ok") else None)
 
     def show(text, keys):
         tg("editMessageText", chat_id=chat, message_id=q["message"]["message_id"], text=text, reply_markup={"inline_keyboard": keys})
@@ -405,13 +441,18 @@ def press(q):
         if not c:
             return
         if op == "again":
-            c["tone"] += 1
-            tg("editMessageText", chat_id=chat, message_id=c["msg"], text=f"📝 کپشن «{c['subject']}» با لحن «{C.TONES[c['tone'] % len(C.TONES)][0]}»…")
+            c["tone"] = C.other_tone(c["tone"])
+            tg("editMessageText", chat_id=chat, message_id=c["msg"], text=f"📝 کپشن «{c['subject']}» با لحن «{C.TONES[c['tone']][0]}»…")
             threading.Thread(target=run_caption, args=(cid,), daemon=True).start()
         elif op == "ok" and c["html"]:
             tg("editMessageText", chat_id=chat, message_id=c["msg"], text=c["html"].replace("📝", "✅", 1), parse_mode="HTML", disable_web_page_preview=True)
     elif data == "go":
         enqueue(chat, None, dict(s), list(s["cuts"]))
+    elif data in ("rnd", "rnd:go"):             # random looks: shown in the menu to change or make, or made at once
+        randomize(s)
+        show(summary(s) + ("\n⏳ ساخته می‌شود…" if data == "rnd:go" else "\nدوباره 🎲 برای ترکیب دیگر، یا ▶️ برای ساخت."), main_keys(s))
+        if data == "rnd:go":
+            enqueue(chat, None, dict(s), list(s["cuts"]))
     elif data.startswith("b:"):                 # the series builder
         d, op = s.setdefault("draft", []), data[2:]
         if op == "new":
