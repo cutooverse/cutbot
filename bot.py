@@ -245,7 +245,7 @@ CATS = [("mode", "🎲 حالت"), ("fruit", "🍋 میوه"), ("style", "✂️
         ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب"), ("autocap", "📝 کپشن"), ("cover", "🖼 کاور")]
 TITLES = {"mode": "حالت ساخت" + "\nدستی: ▶️ همین تنظیمات منو را می‌سازد." + "\nرندوم ۱: هر ▶️ یک ترکیب تازه با یک بسته برش (مثلاً ۳۰)." + "\nرندوم ۲: هر ▶️ یک ترکیب تازه با دو بسته (مثلاً ۱۰ و ۱۰۰)." + "\nرندوم‌ها همیشه 1080 و کیفیت کامل‌اند؛ ترکیبی که ساخته می‌شود در همین منو نشان داده می‌شود.",
           "sawvoice": "صدای موتور اره‌برقی (فقط وقتی چاقو اره‌برقی است)",
-          "cover": "کاور پست" + "\nبعد از ویدیو، یک عکس برای کاور: کپه‌ی آخرین برش روی تخته و چاقو بزرگ جلوی دوربین با تعداد قطعه‌ها روی تیغه." + "\nآخرین بخش یک بار دیگر ساخته می‌شود، پس کمی وقت می‌برد.",
+          "cover": "کاور پست" + "\nفریم اول ویدیو (۰.۱ ثانیه): کپه‌ی آخرین برش روی تخته و چاقو بزرگ جلوی دوربین با تعداد قطعه‌ها روی تیغه." + "\nآخرین بخش یک بار دیگر ساخته می‌شود، پس کمی وقت می‌برد.",
           "autocap": "کپشن خودکار" + "\nبعد از هر ویدیو، کپشن اینستاگرام و تیتر، توضیح و تگ‌های یوتیوب از روی همان تنظیمات نوشته می‌شود.",
           "style": "نوع برش" + "\nرگبار: سبک ویدیوهای Blender؛ میوه در هوا، چاقوها دسته‌دسته از آن رد می‌شوند و به قطعه‌های واقعی می‌ریزد، با صداهای همان ویدیوها.",
           "cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخش)\nیک سری آماده را بزن، یا با «ساختن دلخواه» عددها را دانه‌دانه بچین، یا «تایپ عدد».",
@@ -636,13 +636,26 @@ jobs = queue.Queue()
 def worker():
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
-    try:
-        with_browser(pw, load_options)
-    except Exception:                           # noqa: BLE001
-        log("options:", traceback.format_exc())
+    loaded = [False]
+
+    def looks():                                # the game's looks; a failure (GitHub out of reach a moment) is tried again later
+        try:
+            with_browser(pw, load_options)
+            loaded[0] = True
+        except Exception:                       # noqa: BLE001
+            log("options:", traceback.format_exc())
+
+    looks()
     ready.set()
     while True:
-        chat, msg_id, o, cuts = jobs.get()
+        try:
+            chat, msg_id, o, cuts = jobs.get(timeout=60)
+        except queue.Empty:
+            if not loaded[0]:                   # idle, and the fruit list is still missing: once a minute
+                looks()
+            continue
+        if not loaded[0]:
+            looks()
         note = say(chat, f"⏳ شروع شد: {name_of('fruit', o['fruit'])} · {o['style']} · {'/'.join(map(str, cuts))}", msg_id)
         note_id = note and note.get("message_id")
         last = [""]
@@ -674,6 +687,14 @@ def worker():
                             raise
                         log(f"part {k + 1} failed ({str(e)[:120]}): once more")
                         part("دوباره ضبط می‌شود…")
+            if o.get("cover", "on") == "on":    # the post's cover, the video's first 0.1 s: the last count once more, posed
+                on_status("🖼 در حال ساختن کاور…")
+                try:
+                    still = Path(with_browser(pw, lambda b: make_video(b, o, cuts[-1:], lambda s: None, name, cover=1)))
+                    url += f"&cover={still.stem}"
+                except Exception as e:          # noqa: BLE001
+                    log("cover:", traceback.format_exc())
+                    say(chat, f"❌ کاور ساخته نشد، ویدیو بدون کاور ساخته می‌شود: {str(e)[:300]}", msg_id)
             on_status("در حال ساختن MP4…")
             path = encode(url)
             files.append(path)
@@ -689,18 +710,6 @@ def worker():
                 tg("deleteMessage", chat_id=chat, message_id=note_id)
             if o.get("autocap", "on") == "on":
                 start_caption(chat, *video_facts(o, cuts), reply_to=(sent or {}).get("message_id"), auto=True)
-            if o.get("cover", "on") == "on":    # the post's cover: the last count once more, posed
-                cnote = say(chat, "🖼 کاور در حال ساختن است…", (sent or {}).get("message_id"))
-                try:
-                    still = Path(with_browser(pw, lambda b: make_video(b, o, cuts[-1:], lambda s: None, name, cover=1)))
-                    files.append(still)
-                    tg_file("sendDocument", "document", still, ctype="image/jpeg", chat_id=chat,
-                            reply_to_message_id=(sent or {}).get("message_id"), caption=f"🖼 کاور · {cuts[-1]} cuts")
-                except Exception as e:          # noqa: BLE001
-                    log("cover:", traceback.format_exc())
-                    say(chat, f"❌ کاور ساخته نشد: {str(e)[:300]}", (sent or {}).get("message_id"))
-                if cnote:
-                    tg("deleteMessage", chat_id=chat, message_id=cnote["message_id"])
         except Exception as e:                  # noqa: BLE001
             log(traceback.format_exc())
             hint = "\n\nحافظه‌ی سرور کم آمد: اندازه‌ی ویدیو را 720 و کیفیت را سبک بگذار، یا حافظه‌ی سرور را بیشتر کن." if "out of memory" in str(e) else ""

@@ -7,6 +7,7 @@ POST /rec/start?name=X      start a take (clears _rec/out/X)
 POST /rec/frame?i=N         one JPEG frame
 POST /rec/audio             the WAV soundtrack
 POST /rec/done?fps=30       encode -> _rec/out/X.mp4, answers {"path": ...}
+     &cover=X-cover        the still _rec/out/X-cover.jpg first, for 0.1 s (the post's cover), the rest after it
      &loop=N               a seamless loop that starts at frame N -> _rec/out/X_loop.mp4
 """
 from array import array
@@ -168,9 +169,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 frames, audio = rotate_take(d, int(q["loop"]) + take["offset"], fps)
                 suffix = "_loop"
             out = OUT / f"{take['name']}{suffix}.mp4"
-            cmd = [ffmpeg(), "-y", "-loglevel", "error", "-framerate", fps, "-i", str(frames / "%05d.jpg")]
-            if audio and audio.exists():
-                cmd += ["-i", str(audio), "-c:a", "aac", "-b:a", "192k"]
+            still = OUT / ("".join(c for c in q.get("cover", "") if c.isalnum() or c in "-_") + ".jpg")
+            if q.get("cover") and still.exists():  # the cover first: 0.1 s of one still, the sound starting after it
+                n = max(1, round(float(fps) * 0.1))
+                ms = round(n * 1000 / float(fps))
+                cmd = [ffmpeg(), "-y", "-loglevel", "error", "-loop", "1", "-framerate", fps, "-t", f"{n / float(fps):.4f}", "-i", str(still),
+                       "-framerate", fps, "-i", str(frames / "%05d.jpg")]
+                fc = "[0:v]setsar=1,format=yuvj420p[c];[1:v]setsar=1,format=yuvj420p[v];[c][v]concat=n=2:v=1:a=0[vo]"
+                maps = ["-map", "[vo]"]
+                if audio and audio.exists():
+                    cmd += ["-i", str(audio)]
+                    fc += f";[2:a]adelay={ms}|{ms}[ao]"
+                    maps += ["-map", "[ao]", "-c:a", "aac", "-b:a", "192k"]
+                cmd += ["-filter_complex", fc, *maps]
+            else:
+                cmd = [ffmpeg(), "-y", "-loglevel", "error", "-framerate", fps, "-i", str(frames / "%05d.jpg")]
+                if audio and audio.exists():
+                    cmd += ["-i", str(audio), "-c:a", "aac", "-b:a", "192k"]
             cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
             # no -shortest: the sound is cut to the frames already, and -shortest makes ffmpeg hold ~1.2 GB at 1080
             if THREADS:                                 # x264 takes memory per core it sees, and a cloud box shows many
@@ -182,6 +197,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.reply(500, {"error": r.stderr[-800:].strip() or f"ffmpeg stopped with code {r.returncode}{killed}"})
             if WORK != OUT:
                 shutil.rmtree(d, ignore_errors=True)            # frames are not needed any more
+            if q.get("cover"):
+                still.unlink(missing_ok=True)                   # it is in the video now
             print(f"wrote {out}", flush=True)
             return self.reply(200, {"path": str(out)})
         return self.reply(404, {"error": "unknown"})
