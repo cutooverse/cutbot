@@ -20,8 +20,10 @@ const CUTS = (P.get("cuts") || "10,20,30").split(",").map(Number).filter(n => n 
 const W = +(P.get("w") || 1080), H = +(P.get("h") || 1920), FPS = +(P.get("fps") || 30);
 // Where the social apps draw over a video (Reels, TikTok, Shorts, on a 1080 x 1920 frame): their bar and
 // buttons over the top 250 px, the caption and buttons over the bottom 420. Nothing to read goes there.
+// The title and the count go under the top one; the game frames the scene (the cutter, the fruit, the board
+// with its mark on the front edge) into the band between the words and the bottom one (CUT_BAND, shares of the height).
 const SAFE_TOP = 262, SAFE_BOTTOM = 440;
-window.CUT_SAFE_TOP = (P.get("format") === "vs" ? 560 : 400) / 1920;   // and a floating fruit stays below the titles (the game reads this)
+window.CUT_BAND = [(P.get("format") === "vs" ? 540 : 480) / 1920, (1920 - SAFE_BOTTOM - 10) / 1920];
 const SAW = P.get("knife") === "saw";                  // the chainsaw: its motor's start and run-down belong in the clip
 const NAME = P.get("name") || `${P.get("fruit") || "orange"}-${P.get("style") || "burst"}-${CUTS.join("-")}`;
 const VS = P.get("format") === "vs", BLUR = Math.max(1, +(P.get("blur") || 1));
@@ -158,11 +160,14 @@ function overlay() {
     g.fillText(title, W / 2, (SAFE_TOP + 88) * k);     // its top on the safe line: clear of the apps' own bar
   }
   const sub = $("chopSub").textContent, n = sub.replace(/[^\d]/g, "");
-  if (showCount && n && n !== "1") {
-    g.font = `900 ${170 * k}px Poppins, sans-serif`; g.fillStyle = "#fdfaf4";
-    g.fillText(Number(n).toLocaleString("en-US"), W / 2, H - (SAFE_BOTTOM + 86) * k);   // above the apps' caption
-    g.font = `800 ${52 * k}px Poppins, sans-serif`; g.fillStyle = "#ff4136";
-    g.fillText("PIECES", W / 2, H - (SAFE_BOTTOM + 10) * k);
+  if (showCount && n && n !== "1") {                   // the count: one line under the title, clear of the board and its mark
+    const num = Number(n).toLocaleString("en-US"), y = (SAFE_TOP + 200) * k;
+    g.font = `900 ${100 * k}px Poppins, sans-serif`; const wn = g.measureText(num).width;
+    g.font = `800 ${54 * k}px Poppins, sans-serif`; const wl = g.measureText("PIECES").width, gap = 16 * k, x0 = (W - wn - gap - wl) / 2;
+    g.textAlign = "left";
+    g.font = `900 ${100 * k}px Poppins, sans-serif`; g.fillStyle = "#fdfaf4"; g.fillText(num, x0, y);
+    g.font = `800 ${54 * k}px Poppins, sans-serif`; g.fillStyle = "#ff4136"; g.fillText("PIECES", x0 + wn + gap, y);
+    g.textAlign = "center";
   }
   g.shadowColor = "transparent";
 }
