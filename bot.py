@@ -129,11 +129,13 @@ FIXED = {                                       # looks that are not lists in th
     "notes": {"piano": ["پیانو"], "organ": ["ارگ"], "musicbox": ["جعبه‌موسیقی"], "marimba": ["ماریمبا"], "glass": [], "off": ["nonotes", "بی‌نت"]},
     "cutsound": {"auto": [], "knife": [], "glass": []},
     "edit": {"normal": [], "loop": ["seamless", "لوپ"]},
+    "sawvoice": {"classic": ["دوزمانه", "twostroke"], "deep": ["بم"]},
     "format": {"normal": [], "vs": ["1vsn", "وی‌اس"]},
 }
-ORDER = ["fruit", "style", "camera", "speed", "knife", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit", "format"]
+ORDER = ["fruit", "style", "camera", "speed", "knife", "sawvoice", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit", "format"]
 DEFAULTS = dict(fruit="orange", style="burst", camera="front", speed="normal", knife="chef", backdrop="teal", board="walnut",
-                material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal", format="normal", autocap="on")  # fits 1 GB of memory
+                material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal", format="normal", autocap="on",
+                mode="manual", sawvoice="classic")  # fits 1 GB of memory
 CUTS = [10, 20, 30]
 MAX_CUT, MAX_PARTS = 500, 6                     # cuts in one segment (tested up to 500), segments in a video
 options = {"fruit": {"orange": {"en": "Orange", "fa": "پرتقال"}}, "backdrop": {}, "board": {}, "knife": {}, "theme": {}}
@@ -236,11 +238,13 @@ def options_text():
 
 # --- the menu: buttons under a message ----------------------------------------------------------
 
-CATS = [("fruit", "🍋 میوه"), ("style", "✂️ برش"), ("cuts", "🔢 تعداد"), ("camera", "🎥 دوربین"), ("speed", "⚡ سرعت"),
-        ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("board", "🪵 تخته"),
+CATS = [("mode", "🎲 حالت"), ("fruit", "🍋 میوه"), ("style", "✂️ برش"), ("cuts", "🔢 تعداد"), ("camera", "🎥 دوربین"), ("speed", "⚡ سرعت"),
+        ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("sawvoice", "🪚 موتور اره"), ("board", "🪵 تخته"),
         ("backdrop", "🖼 پس‌زمینه"), ("theme", "🎨 تم"), ("material", "💎 جنس"), ("size", "📏 میوه"),
         ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب"), ("autocap", "📝 کپشن")]
-TITLES = {"autocap": "کپشن خودکار" + "\nبعد از هر ویدیو، کپشن اینستاگرام و تیتر، توضیح و تگ‌های یوتیوب از روی همان تنظیمات نوشته می‌شود.",
+TITLES = {"mode": "حالت ساخت" + "\nدستی: ▶️ همین تنظیمات منو را می‌سازد." + "\nرندوم ۱: هر ▶️ یک ترکیب تازه با یک بسته برش (مثلاً ۳۰)." + "\nرندوم ۲: هر ▶️ یک ترکیب تازه با دو بسته (مثلاً ۱۰ و ۱۰۰)." + "\nرندوم‌ها همیشه 1080 و کیفیت کامل‌اند و تنظیمات منو دست نمی‌خورد.",
+          "sawvoice": "صدای موتور اره‌برقی (فقط وقتی چاقو اره‌برقی است)",
+          "autocap": "کپشن خودکار" + "\nبعد از هر ویدیو، کپشن اینستاگرام و تیتر، توضیح و تگ‌های یوتیوب از روی همان تنظیمات نوشته می‌شود.",
           "style": "نوع برش" + "\nرگبار: سبک ویدیوهای Blender؛ میوه در هوا، چاقوها دسته‌دسته از آن رد می‌شوند و به قطعه‌های واقعی می‌ریزد، با صداهای همان ویدیوها.",
           "cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخش)\nیک سری آماده را بزن، یا با «ساختن دلخواه» عددها را دانه‌دانه بچین، یا «تایپ عدد».",
           "format": "قالب ویدیو\n1 VS N: مثل ویدیوهای Blender؛ ۲ ثانیه از اوج بخش آخر در شروع، عنوان کوچک‌تر، بدون شمارش قطعه‌ها و بدون نت.\n"
@@ -262,6 +266,8 @@ LABELS = {
     "quality": {"lite": "سبک", "full": "کامل"},
     "format": {"normal": "معمولی", "vs": "1 VS N"},
     "autocap": {"on": "خودکار", "off": "خاموش"},
+    "mode": {"manual": "دستی", "r1": "رندوم ۱", "r2": "رندوم ۲"},
+    "sawvoice": {"classic": "دوزمانه", "deep": "بم"},
 }
 CUT_PRESETS = ["10,20,30", "5,15,30", "1,10,50", "1,10,100", "10,50,100", "1,5,10,50,100", "1,10,100,200", "1,50,100,200",
                "1,10,100,200,500", "50,100,200", "100,200,300", "1,100,500", "20", "50", "100", "200", "300", "500"]
@@ -293,7 +299,7 @@ def main_keys(s):
     def value(cat):
         return dict(choices(cat)).get(now(s, cat), now(s, cat).replace(",", "·")) or "انتخاب"
     keys = grid([{"text": f"{title}: {value(cat)}", "callback_data": f"c:{cat}"} for cat, title in CATS], 2)
-    return keys + [[{"text": "🎲 رندوم", "callback_data": "rnd"}, {"text": "🎲 ساخت رندوم", "callback_data": "rnd:go"}],
+    return keys + [[{"text": "🎲 پر کردن منو با رندوم", "callback_data": "rnd"}],
                    [{"text": "📝 کپشن‌ساز", "callback_data": "cap:new"}], [{"text": "▶️ ساخت ویدیو", "callback_data": "go"}]]
 
 
@@ -384,8 +390,16 @@ RANDOM_SERIES = {"normal": ["1,10,100", "1,10,50,100", "5,25,100", "10,50,150", 
                  "vs": ["1,100", "1,50", "5,150", "1,200", "10,250", "1,75"], "vs-flurry": ["1,50", "1,75", "5,100", "1,120"]}
 
 
-def randomize(s):
-    """New random looks in the menu `s`; its automatic caption switch stays as it is."""
+# one pack (random 1) and two packs (random 2): the counts each style is made with in about an hour on Railway at most
+# (the saw is the slowest: 30 cuts on the board took 11 min on a laptop, about 5x that on Railway)
+RANDOM_ONE = {"normal": [5, 10, 20, 30, 50, 75, 100, 150, 200], "flurry": [10, 20, 30, 50, 75, 100], "saw": [5, 10, 15, 20, 30]}
+RANDOM_TWO = {"normal": ([1, 3, 5, 10], [50, 100, 150, 200, 300]), "flurry": ([1, 3, 5, 10], [30, 50, 75, 100, 120]),
+              "saw": ([1, 3, 5], [15, 20, 30])}
+
+
+def randomize(s, packs=None):
+    """New random looks in the menu `s`; its mode and automatic caption switch stay as they are. packs: 1 (one count),
+    2 (a small count and a big one), None (a series of two to four)."""
     pick = lambda cat: random.choice([i for i, _ in choices(cat)])
     s.update(fruit=pick("fruit"), style=random.choice(["burst", "flurry", "flurry", "dice", "burst"]),
              camera=random.choice(["front", "front", "top", "close"]), speed=random.choice(["normal", "normal", "slow", "fast"]),
@@ -393,11 +407,23 @@ def randomize(s):
              material=random.choice(["real"] * 4 + ["glass"]), size=random.choice(["m", "m", "l", "s"]),
              notes=random.choice(["piano", "organ", "musicbox", "marimba", "glass", "off"]), cutsound="auto",
              edit=random.choice(["normal"] * 3 + ["loop"]), format=random.choice(["normal"] * 2 + ["vs"]),
-             video="1080", quality="full")
+             video="1080", quality="full", sawvoice=random.choice(["classic", "deep"]))
     if s["style"] == "free":
         s["style"] = "burst"
-    kind = ("vs-" if s["format"] == "vs" else "") + ("flurry" if s["style"] == "flurry" else "normal")
-    s["cuts"] = [int(n) for n in random.choice(RANDOM_SERIES.get(kind, RANDOM_SERIES["vs"] if s["format"] == "vs" else RANDOM_SERIES["normal"])).split(",")]
+    saw = s["knife"] == "saw"
+    if packs == 1:
+        s["format"] = "normal"                  # 1 VS N needs two counts
+    kind = "saw" if saw else "flurry" if s["style"] == "flurry" else "normal"
+    if packs == 1:
+        s["cuts"] = [random.choice(RANDOM_ONE[kind])]
+    elif packs == 2:
+        small, big = RANDOM_TWO[kind]
+        s["cuts"] = [random.choice(small), random.choice(big)]
+    else:
+        kind = ("vs-" if s["format"] == "vs" else "") + ("flurry" if s["style"] == "flurry" else "normal")
+        s["cuts"] = [int(n) for n in random.choice(RANDOM_SERIES.get(kind, RANDOM_SERIES["vs"] if s["format"] == "vs" else RANDOM_SERIES["normal"])).split(",")]
+        if saw:                                 # the saw is slow: its counts stay low
+            s["cuts"] = sorted({min(n, 30) for n in s["cuts"]})
     if s["format"] == "vs" and s["edit"] == "loop":   # the 1 VS N opening needs the normal edit
         s["edit"] = "normal"
     return s
@@ -406,7 +432,7 @@ def randomize(s):
 def summary(s):
     label = lambda cat: dict(choices(cat)).get(s[cat], s[cat])
     return (f"🎲 {label('fruit')}{' شیشه‌ای' if s['material'] == 'glass' else ''} · {label('style')} · {' / '.join(map(str, s['cuts']))} برش\n"
-            f"{label('camera')} · {label('backdrop')} · {label('board')} · {label('knife')} · نت: {label('notes')}"
+            f"{label('camera')} · {label('backdrop')} · {label('board')} · {label('knife')}{(' (' + label('sawvoice') + ')') if s['knife'] == 'saw' else ''} · نت: {label('notes')}"
             f"{' · لوپ' if s['edit'] == 'loop' else ''}{' · 1 VS N' if s['format'] == 'vs' else ''} · 1080 کامل")
 
 
@@ -424,7 +450,7 @@ def press(q):
         tg("answerCallbackQuery", callback_query_id=q["id"])
         return log("ignored a button from", user)
     s, data = menu_of(chat), q.get("data", "")
-    tg("answerCallbackQuery", callback_query_id=q["id"], text="ساخته می‌شود ⏳" if data in ("go", "rnd:go") else "✅ تایید شد" if data.startswith("cap:ok") else None)
+    tg("answerCallbackQuery", callback_query_id=q["id"], text="ساخته می‌شود ⏳" if data == "go" else "✅ تایید شد" if data.startswith("cap:ok") else None)
 
     def show(text, keys):
         tg("editMessageText", chat_id=chat, message_id=q["message"]["message_id"], text=text, reply_markup={"inline_keyboard": keys})
@@ -447,12 +473,15 @@ def press(q):
         elif op == "ok" and c["html"]:
             tg("editMessageText", chat_id=chat, message_id=c["msg"], text=c["html"].replace("📝", "✅", 1), parse_mode="HTML", disable_web_page_preview=True)
     elif data == "go":
-        enqueue(chat, None, dict(s), list(s["cuts"]))
-    elif data in ("rnd", "rnd:go"):             # random looks: shown in the menu to change or make, or made at once
-        randomize(s)
-        show(summary(s) + ("\n⏳ ساخته می‌شود…" if data == "rnd:go" else "\nدوباره 🎲 برای ترکیب دیگر، یا ▶️ برای ساخت."), main_keys(s))
-        if data == "rnd:go":
-            enqueue(chat, None, dict(s), list(s["cuts"]))
+        o = dict(s)
+        if s["mode"] in ("r1", "r2"):           # random 1 / 2: a fresh draw each time, the menu left as it is
+            randomize(o, 1 if s["mode"] == "r1" else 2)
+            say(chat, summary(o))
+        enqueue(chat, None, o, list(o["cuts"]))
+    elif data == "rnd":                         # random looks in the menu, to change and then make
+        randomize(s, {"r1": 1, "r2": 2}.get(s["mode"]))
+        s["mode"] = "manual"                    # what is now in the menu is what ▶️ makes
+        show(summary(s) + "\nدوباره 🎲 برای ترکیب دیگر، یا ▶️ برای ساخت.", main_keys(s))
     elif data.startswith("b:"):                 # the series builder
         d, op = s.setdefault("draft", []), data[2:]
         if op == "new":
@@ -516,7 +545,7 @@ def make_video(browser, o, cuts, on_status, name, **extra):
     w, h = ("720", "1280") if o["video"] == "720" else ("1080", "1920")
     q = dict(cuts=",".join(map(str, cuts)), style=o["style"], camera=o["camera"], fruit=o["fruit"], speed=o["speed"],
              board=o["board"], backdrop=o["backdrop"], knife=o["knife"], material=o["material"], size=o["size"],
-             notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"], **({"format": "vs"} if o.get("format") == "vs" else {}),
+             notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"], sawvoice=o.get("sawvoice", "classic"), **({"format": "vs"} if o.get("format") == "vs" else {}),
              w=w, h=h, fps=30, name=name, defer=1, **{k: v for k, v in extra.items() if v is not None})
     # full: the site's look on a computer, each frame drawn as 2 x 2 tiles on a small canvas (the same picture
     # for less memory and more time); 4096 shadows ("best") alone take over 100 MB more
