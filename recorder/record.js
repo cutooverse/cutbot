@@ -4,6 +4,7 @@
 //   http://localhost:8770/_rec/record.html?cuts=10,20,30&style=burst&camera=front&fruit=orange
 //   other options: speed, board, backdrop, material, knife, size, cutsound (auto, knife, glass),
 //   notes (off, piano, organ, musicbox, marimba, glass), edit (normal, loop), w=1080, h=1920, fps=30, name
+//   knife=saw: the chainsaw (sawvoice: classic, deep); the clip runs on until its motor has run down
 //   format=vs: the "1 Cut VS N Cuts" short: a 2 s opening from the last segment's frenzy, smaller titles,
 //   no piece count, a zoom out into the first segment, no notes unless asked. blur=3: motion blur (3 renders a frame)
 //   append=1: go on with the take of the same name (one segment per browser, for a server short of memory);
@@ -17,6 +18,11 @@
 const P = new URLSearchParams(location.search);
 const CUTS = (P.get("cuts") || "10,20,30").split(",").map(Number).filter(n => n > 0);
 const W = +(P.get("w") || 1080), H = +(P.get("h") || 1920), FPS = +(P.get("fps") || 30);
+// Where the social apps draw over a video (Reels, TikTok, Shorts, on a 1080 x 1920 frame): their bar and
+// buttons over the top 250 px, the caption and buttons over the bottom 420. Nothing to read goes there.
+const SAFE_TOP = 262, SAFE_BOTTOM = 440;
+window.CUT_SAFE_TOP = (P.get("format") === "vs" ? 560 : 400) / 1920;   // and a floating fruit stays below the titles (the game reads this)
+const SAW = P.get("knife") === "saw";                  // the chainsaw: its motor's start and run-down belong in the clip
 const NAME = P.get("name") || `${P.get("fruit") || "orange"}-${P.get("style") || "burst"}-${CUTS.join("-")}`;
 const VS = P.get("format") === "vs", BLUR = Math.max(1, +(P.get("blur") || 1));
 const TILES = Math.max(1, Math.round(+(P.get("tiles") || 1)));
@@ -40,7 +46,7 @@ localStorage.setItem("cutcount.v1", JSON.stringify({
     material: P.get("material") || "real", knife: P.get("knife") || "chef", size: P.get("size") || "m" },
   // quality: best (full shadows) or battery (the light phone profile: much faster without a GPU)
   settings: { sound: true, haptics: false, strength: "normal", quality: P.get("quality") || "best", lang: "en",
-    cutSound: P.get("cutsound") || "auto", notes: P.get("notes") || (VS ? "off" : "piano") }, stars: Array(9).fill(3),   // the Sound sheet
+    cutSound: P.get("cutsound") || "auto", notes: P.get("notes") || (VS ? "off" : "piano"), saw: P.get("sawvoice") || "classic" }, stars: Array(9).fill(3),   // the Sound sheet
 }));
 
 // --- a made-up clock and a frame the size of the video
@@ -130,13 +136,14 @@ const cutLabel = n => `${n} ${n === 1 ? "Cut" : "Cuts"}`;
 // the short's captions: Poppins Bold 112 from y 150 with a soft shadow, as the Blender videos have them
 function caption(lines) {
   const k = W / 1080;
-  g.font = `700 ${112 * k}px Poppins, sans-serif`; g.textAlign = "center"; g.textBaseline = "alphabetic";
+  const px = lines.length > 1 ? 96 : 112;              // the three-line opening card a little smaller: it starts lower now
+  g.font = `700 ${px * k}px Poppins, sans-serif`; g.textAlign = "center"; g.textBaseline = "alphabetic";
   g.shadowColor = "rgba(0,0,0,0.6)"; g.shadowBlur = 14 * k; g.shadowOffsetX = 3 * k; g.shadowOffsetY = 5 * k;
-  let y = 150 * k;
+  let y = SAFE_TOP * k;
   for (const [text, color] of lines) {
     const m = g.measureText(text);
     g.fillStyle = color; g.fillText(text, W / 2, y + m.actualBoundingBoxAscent);
-    y += m.actualBoundingBoxAscent + m.actualBoundingBoxDescent + 112 * k * 0.18;
+    y += m.actualBoundingBoxAscent + m.actualBoundingBoxDescent + px * k * 0.18;
   }
   g.shadowColor = "transparent"; g.shadowBlur = g.shadowOffsetX = g.shadowOffsetY = 0;
 }
@@ -147,15 +154,15 @@ function overlay() {
   g.textAlign = "center"; g.textBaseline = "alphabetic";
   g.shadowColor = "rgba(0,0,0,0.5)"; g.shadowBlur = 24 * k; g.shadowOffsetY = 4 * k;
   if (title) {
-    g.font = `900 ${140 * k}px Poppins, sans-serif`; g.fillStyle = "#fdfaf4";
-    g.fillText(title, W / 2, 185 * k);                 // above the knife waiting over the fruit
+    g.font = `900 ${120 * k}px Poppins, sans-serif`; g.fillStyle = "#fdfaf4";
+    g.fillText(title, W / 2, (SAFE_TOP + 88) * k);     // its top on the safe line: clear of the apps' own bar
   }
   const sub = $("chopSub").textContent, n = sub.replace(/[^\d]/g, "");
   if (showCount && n && n !== "1") {
     g.font = `900 ${170 * k}px Poppins, sans-serif`; g.fillStyle = "#fdfaf4";
-    g.fillText(Number(n).toLocaleString("en-US"), W / 2, H - 330 * k);
+    g.fillText(Number(n).toLocaleString("en-US"), W / 2, H - (SAFE_BOTTOM + 86) * k);   // above the apps' caption
     g.font = `800 ${52 * k}px Poppins, sans-serif`; g.fillStyle = "#ff4136";
-    g.fillText("PIECES", W / 2, H - 250 * k);
+    g.fillText("PIECES", W / 2, H - (SAFE_BOTTOM + 10) * k);
   }
   g.shadowColor = "transparent";
 }
@@ -241,6 +248,7 @@ for (const [i, n] of CUTS.entries()) {
   }
   press("pointerup");
 }
+if (SAW && !LOOP && P.get("tail") !== "0") await frames(VS ? 1.6 : 0.3);   // the saw's motor idles 2.2 s after its last cut, then runs down: all of it in the clip
 if (!LOOP && !VS && P.get("tail") !== "0") { title = ""; await frames(0.4); }  // a loop ends on the pile, like every segment
 
 // the opening: the end of the last segment's frenzy, its sound first, with the VS card
