@@ -242,7 +242,7 @@ CATS = [("mode", "🎲 حالت"), ("fruit", "🍋 میوه"), ("style", "✂️
         ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("sawvoice", "🪚 موتور اره"), ("board", "🪵 تخته"),
         ("backdrop", "🖼 پس‌زمینه"), ("theme", "🎨 تم"), ("material", "💎 جنس"), ("size", "📏 میوه"),
         ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب"), ("autocap", "📝 کپشن")]
-TITLES = {"mode": "حالت ساخت" + "\nدستی: ▶️ همین تنظیمات منو را می‌سازد." + "\nرندوم ۱: هر ▶️ یک ترکیب تازه با یک بسته برش (مثلاً ۳۰)." + "\nرندوم ۲: هر ▶️ یک ترکیب تازه با دو بسته (مثلاً ۱۰ و ۱۰۰)." + "\nرندوم‌ها همیشه 1080 و کیفیت کامل‌اند و تنظیمات منو دست نمی‌خورد.",
+TITLES = {"mode": "حالت ساخت" + "\nدستی: ▶️ همین تنظیمات منو را می‌سازد." + "\nرندوم ۱: هر ▶️ یک ترکیب تازه با یک بسته برش (مثلاً ۳۰)." + "\nرندوم ۲: هر ▶️ یک ترکیب تازه با دو بسته (مثلاً ۱۰ و ۱۰۰)." + "\nرندوم‌ها همیشه 1080 و کیفیت کامل‌اند؛ ترکیبی که ساخته می‌شود در همین منو نشان داده می‌شود.",
           "sawvoice": "صدای موتور اره‌برقی (فقط وقتی چاقو اره‌برقی است)",
           "autocap": "کپشن خودکار" + "\nبعد از هر ویدیو، کپشن اینستاگرام و تیتر، توضیح و تگ‌های یوتیوب از روی همان تنظیمات نوشته می‌شود.",
           "style": "نوع برش" + "\nرگبار: سبک ویدیوهای Blender؛ میوه در هوا، چاقوها دسته‌دسته از آن رد می‌شوند و به قطعه‌های واقعی می‌ریزد، با صداهای همان ویدیوها.",
@@ -295,8 +295,13 @@ def grid(buttons, n):
     return [buttons[i:i + n] for i in range(0, len(buttons), n)]
 
 
+SAW_SOUND = {"cutsound": "اره‌برقی", "notes": "بدون نت"}   # what the menu shows for these while the knife is the chainsaw
+
+
 def main_keys(s):
     def value(cat):
+        if s.get("knife") == "saw" and cat in SAW_SOUND:   # with the chainsaw its motor is the whole sound
+            return SAW_SOUND[cat]
         return dict(choices(cat)).get(now(s, cat), now(s, cat).replace(",", "·")) or "انتخاب"
     keys = grid([{"text": f"{title}: {value(cat)}", "callback_data": f"c:{cat}"} for cat, title in CATS], 2)
     return keys + [[{"text": "🎲 پر کردن منو با رندوم", "callback_data": "rnd"}],
@@ -378,7 +383,9 @@ def video_facts(o, cuts):
         facts.append(f"It is a '1 Cut VS {cuts[-1]} Cuts' comparison short.")
     if o["edit"] == "loop":
         facts.append("It loops seamlessly: the end runs straight into the start.")
-    if o["notes"] != "off":
+    if o["knife"] == "saw":
+        facts.append("It is cut with a chainsaw: the motor starts, roars through every cut and runs down at the end.")
+    elif o["notes"] != "off":
         facts.append(f"Every cut plays the next note of a {o['notes']} melody.")
     return subject, "\n".join(facts)
 
@@ -411,6 +418,8 @@ def randomize(s, packs=None):
     if s["style"] == "free":
         s["style"] = "burst"
     saw = s["knife"] == "saw"
+    if saw:
+        s["notes"] = "off"                      # the chainsaw's motor is the whole sound
     if packs == 1:
         s["format"] = "normal"                  # 1 VS N needs two counts
     kind = "saw" if saw else "flurry" if s["style"] == "flurry" else "normal"
@@ -432,7 +441,7 @@ def randomize(s, packs=None):
 def summary(s):
     label = lambda cat: dict(choices(cat)).get(s[cat], s[cat])
     return (f"🎲 {label('fruit')}{' شیشه‌ای' if s['material'] == 'glass' else ''} · {label('style')} · {' / '.join(map(str, s['cuts']))} برش\n"
-            f"{label('camera')} · {label('backdrop')} · {label('board')} · {label('knife')}{(' (' + label('sawvoice') + ')') if s['knife'] == 'saw' else ''} · نت: {label('notes')}"
+            f"{label('camera')} · {label('backdrop')} · {label('board')} · {label('knife')}{(' (' + label('sawvoice') + ')') if s['knife'] == 'saw' else ''}{'' if s['knife'] == 'saw' else ' · نت: ' + label('notes')}"
             f"{' · لوپ' if s['edit'] == 'loop' else ''}{' · 1 VS N' if s['format'] == 'vs' else ''} · 1080 کامل")
 
 
@@ -474,9 +483,10 @@ def press(q):
             tg("editMessageText", chat_id=chat, message_id=c["msg"], text=c["html"].replace("📝", "✅", 1), parse_mode="HTML", disable_web_page_preview=True)
     elif data == "go":
         o = dict(s)
-        if s["mode"] in ("r1", "r2"):           # random 1 / 2: a fresh draw each time, the menu left as it is
-            randomize(o, 1 if s["mode"] == "r1" else 2)
-            say(chat, summary(o))
+        if s["mode"] in ("r1", "r2"):           # random 1 / 2: a fresh draw each time, shown in the menu as it is made
+            randomize(s, 1 if s["mode"] == "r1" else 2)
+            o = dict(s)
+            show(summary(s) + "\n⏳ ساخته می‌شود… (▶️ دوباره = یک ترکیب تازه)", main_keys(s))
         enqueue(chat, None, o, list(o["cuts"]))
     elif data == "rnd":                         # random looks in the menu, to change and then make
         randomize(s, {"r1": 1, "r2": 2}.get(s["mode"]))
@@ -503,6 +513,9 @@ def press(q):
     elif data.startswith("c:") and data[2:] in dict(CATS):
         typing.discard(chat); captioning.discard(chat)
         cat = data[2:]
+        if s.get("knife") == "saw" and cat in SAW_SOUND:
+            return show("🪚 با اره‌برقی صدای ویدیو همان موتور اره است: نت و صدای برش دیگری پخش نمی‌شود." + "\n"
+                        "موتور را از «🪚 موتور اره» عوض کن، یا برای نت و صدای برش چاقوی دیگری بگذار.", [[{"text": "⬅️ برگشت", "callback_data": "m"}]])
         show(TITLES.get(cat, dict(CATS)[cat]), cat_keys(s, cat))
     elif data.startswith("s:"):
         _, cat, v = data.split(":", 2)
@@ -545,7 +558,7 @@ def make_video(browser, o, cuts, on_status, name, **extra):
     w, h = ("720", "1280") if o["video"] == "720" else ("1080", "1920")
     q = dict(cuts=",".join(map(str, cuts)), style=o["style"], camera=o["camera"], fruit=o["fruit"], speed=o["speed"],
              board=o["board"], backdrop=o["backdrop"], knife=o["knife"], material=o["material"], size=o["size"],
-             notes=o["notes"], cutsound=o["cutsound"], edit=o["edit"], sawvoice=o.get("sawvoice", "classic"), **({"format": "vs"} if o.get("format") == "vs" else {}),
+             notes="off" if o["knife"] == "saw" else o["notes"], cutsound=o["cutsound"], edit=o["edit"], sawvoice=o.get("sawvoice", "classic"), **({"format": "vs"} if o.get("format") == "vs" else {}),
              w=w, h=h, fps=30, name=name, defer=1, **{k: v for k, v in extra.items() if v is not None})
     # full: the site's look on a computer, each frame drawn as 2 x 2 tiles on a small canvas (the same picture
     # for less memory and more time); 4096 shadows ("best") alone take over 100 MB more
