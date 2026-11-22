@@ -118,6 +118,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if u.path == "/rec/still":                      # one picture (a cover), straight into the output folder
+            name = "".join(c for c in q.get("name", "still") if c.isalnum() or c in "-_") or "still"
+            OUT.mkdir(parents=True, exist_ok=True)
+            (OUT / f"{name}.jpg").write_bytes(data)
+            return self.reply(200, {"path": str(OUT / f"{name}.jpg")})
         if u.path == "/rec/start":
             name = "".join(c for c in q.get("name", "take") if c.isalnum() or c in "-_") or "take"
             d = WORK / name

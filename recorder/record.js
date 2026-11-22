@@ -12,6 +12,8 @@
 //   part=first|mid|last (format=vs in parts): the first keeps the opening's frames free, the last makes the
 //   opening from its own frenzy and writes it there, with its sound apart (hook.wav, mixed in by the server);
 //   series=25,75: the whole take's counts, for the opening's "25 Cuts VS 75 Cuts"
+//   cover=1: no video, one still for a post's cover: the last count's pile, the count written on the blade
+//   (cover=white or etched forces the letters; at, wide, tilt, settle: see cover())
 //   tiles=2: each frame drawn as 2 x 2 tiles on a canvas a quarter of the size, then put together: the same
 //   picture for much less memory and more time (a server with 1 GB)
 
@@ -24,6 +26,7 @@ const W = +(P.get("w") || 1080), H = +(P.get("h") || 1920), FPS = +(P.get("fps")
 // with its mark on the front edge) into the band between the words and the bottom one (CUT_BAND, shares of the height).
 const SAFE_TOP = 262, SAFE_BOTTOM = 440;
 window.CUT_BAND = [(P.get("format") === "vs" ? 540 : 480) / 1920, (1920 - SAFE_BOTTOM - 10) / 1920];
+const COVER = P.get("cover");                          // a still for a post's cover instead of a video (see cover())
 const SAW = P.get("knife") === "saw";                  // the chainsaw: its motor's start and run-down belong in the clip
 const NAME = P.get("name") || `${P.get("fruit") || "orange"}-${P.get("style") || "burst"}-${CUTS.join("-")}`;
 const VS = P.get("format") === "vs", BLUR = Math.max(1, +(P.get("blur") || 1));
@@ -194,6 +197,11 @@ async function frame() {
   }
   overlay();
   preview.getContext("2d").drawImage(out, 0, 0, preview.width, preview.height);
+  if (COVER) {                                         // only the last picture is kept
+    fi++; window.__recBeat = fi;
+    if (fi % 20 === 0) await new Promise(r => setTimeout(r));
+    return;
+  }
   const jpg = await new Promise(r => out.toBlob(r, "image/jpeg", 0.92));
   await fetch(`/rec/frame?i=${fi++}`, { method: "POST", body: jpg });
   window.__recBeat = fi;                               // a heartbeat: a slow frame (a burst on one CPU) is not a stuck page
@@ -216,11 +224,11 @@ const press = type => gl.dispatchEvent(new PointerEvent(type, { bubbles: true, c
 const LOOP = P.get("edit") === "loop";
 let seam = 0;
 
-await post(`/rec/start?name=${encodeURIComponent(NAME)}${P.get("append") ? "&append=1" : ""}`);
-store.looks.cuts = CUTS[0];                            // the first round starts with its count (a saved one stops at 100)
+if (!COVER) await post(`/rec/start?name=${encodeURIComponent(NAME)}${P.get("append") ? "&append=1" : ""}`);
+store.looks.cuts = COVER ? CUTS[CUTS.length - 1] : CUTS[0];   // a cover: the last count's pile                            // the first round starts with its count (a saved one stops at 100)
 document.querySelector('[data-mode="chop"]').click();
 const started = Date.now();                            // the real clock, for the report
-for (const [i, n] of CUTS.entries()) {
+for (const [i, n] of (COVER ? CUTS.slice(-1) : CUTS).entries()) {
   // the first segment has its count already; opening the Looks sheet draws every fruit's thumbnail (a second
   // WebGL picture and 17 fruits' shaders), memory a small server does not have
   if (i) setCuts(n);                                   // also starts a fresh fruit
@@ -228,7 +236,7 @@ for (const [i, n] of CUTS.entries()) {
   zoomFrom = VS && i === 0 && FIRST ? fi : -1;
   say(`${NAME}\n${title}: getting ready`);
   await frames(VS ? (i === 0 ? 0.5 : 0.15) : 0.8);
-  const last = i === CUTS.length - 1;
+  const last = COVER || i === CUTS.length - 1;
   if (HOOK && last && LAST) { ring = []; ringOn = true; }
   press("pointerdown");
   let guard = 0;
@@ -243,7 +251,8 @@ for (const [i, n] of CUTS.entries()) {
   if (store.looks.style === "free") press("pointerup");   // Free style chops while held: let go at n
   showCount = true;
   if (ringOn && ring.length >= HOOK) ringOn = false;  // a short chop: the opening goes on into the fall
-  for (let f = 0; f < Math.round((VS ? 1.8 : 3.2) * FPS); f++) {  // the fall and the count
+  // the fall and the count (a cover waits until the last piece lies still: that takes a real pile 10 s)
+  for (let f = 0; f < Math.round((COVER ? +(P.get("settle") || 12) : VS ? 1.8 : 3.2) * FPS); f++) {
     await frame();
     if (ringOn && ring.length >= HOOK) ringOn = false;
   }
@@ -252,6 +261,12 @@ for (const [i, n] of CUTS.entries()) {
     if (ring.length >= HOOK) ringOn = false;
   }
   press("pointerup");
+}
+if (COVER) {
+  const saved = await cover();
+  window.__recDone = { path: saved[0], stills: saved };
+  say(`cover: ${saved.join("\n")}\n(${((Date.now() - started) / 1000).toFixed(0)} s)`);
+  await new Promise(() => {});                         // nothing more: no sound, no video
 }
 if (SAW && !LOOP && P.get("tail") !== "0") await frames(VS ? 1.6 : 0.3);   // the saw's motor idles 2.2 s after its last cut, then runs down: all of it in the clip
 if (!LOOP && !VS && P.get("tail") !== "0") { title = ""; await frames(0.4); }  // a loop ends on the pile, like every segment
@@ -304,6 +319,88 @@ if (P.get("defer")) {                                  // the driver closes the 
   const res = await post(encode);
   window.__recDone = res;
   say(res.path ? `done: ${fi} frames, ${dur.toFixed(1)} s, ${heard.length} sounds\n${res.path}\n(${((Date.now() - started) / 1000).toFixed(0)} s to record)` : `failed: ${res.error}`);
+}
+
+// cover=1: the picture for a post's cover. The pile lies on the board, the cutter is held up large
+// before the camera, and the count is written on its blade (a saw: on its bar), lying in the blade's
+// own plane: <name>-cover.jpg. The letters are dark on bright steel and light on dark (cover=etched or
+// cover=white forces one). Other options: at (how far down, 0.40), wide (share of the width), tilt, settle (seconds).
+async function cover() {
+  const THREE = await import("three");
+  const { stage, game } = window.CUT_GAME, rig = game.slots[0].knife, cam = stage.cameras[0], kn = rig.group;
+  const kind = store.looks.knife, saw = kind === "saw";
+  const LEN = saw ? [-0.168, 0.22] : [-0.108, 0.225];   // the whole tool, tip to butt (the rig's frame: tip at -x, edge along y = 0)
+  const BOX = saw ? [-0.150, -0.006, 0.0085, 0.0345]     // the flat of the blade the words may take: x0, x1, y0, y1
+    : kind === "cleaver" ? [-0.056, 0.094, 0.036, 0.0735] : [-0.048, 0.094, 0.0065, 0.043];   // a cleaver: the forged black above its ground edge
+  const mid = new THREE.Vector3((LEN[0] + LEN[1]) / 2, saw ? 0.034 : 0.024, 0);
+  rig.stop(); rig.anim = null; rig.away = null; rig.update = () => {};   // it is ours now: the game no longer moves it
+  kn.visible = true;
+  cam.updateMatrixWorld();
+  // flat to the camera, then turned a little: the tip down towards the pile, the handle nearer
+  const q = cam.quaternion.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.10, 0.20, +(P.get("tilt") || 0.17))));
+  const at = +(P.get("at") || 0.40);                    // how far down the picture its middle is
+  const dir = new THREE.Vector3(0, 1 - 2 * at, 0.5).unproject(cam).sub(cam.position).normalize();
+  const where = cam.position.clone().addScaledVector(dir, cam.position.distanceTo(rig.home) * 0.82);
+  const place = s => {
+    kn.quaternion.copy(q); kn.scale.setScalar(s);
+    kn.position.copy(where).sub(mid.clone().multiplyScalar(s).applyQuaternion(q)); kn.updateMatrixWorld(true);
+  };
+  const px = (x, y) => { const v = new THREE.Vector3(x, y, 0.0012).applyMatrix4(kn.matrixWorld).project(cam); return [(v.x + 1) / 2 * W, (1 - v.y) / 2 * H]; };
+  place(1);
+  const a = px(LEN[0], mid.y), b = px(LEN[1], mid.y);
+  const s = +(P.get("wide") || (saw ? 0.93 : 0.88)) * W / Math.hypot(b[0] - a[0], b[1] - a[1]);   // as wide as the picture allows (a saw's bar is only half of it)
+  place(s);
+  const a2 = px(LEN[0], mid.y), b2 = px(LEN[1], mid.y);  // turned, its far end looks shorter: put what is seen in the middle
+  where.addScaledVector(new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion), (W / 2 - (a2[0] + b2[0]) / 2) * (LEN[1] - LEN[0]) * s / Math.hypot(b2[0] - a2[0], b2[1] - a2[1]));
+  place(s);
+  showCount = false;
+  await frames(0.2);                                    // the shadows and the light follow
+
+  const n = Number($("chopSub").textContent.replace(/[^\d]/g, "")).toLocaleString("en-US");
+  const U = 10000;                                      // lettering units to a metre
+  const O = px(BOX[0], BOX[2]), X = px(BOX[1], BOX[2]), Y = px(BOX[0], BOX[3]);
+  const bw = (BOX[1] - BOX[0]) * U, bh = (BOX[3] - BOX[2]) * U;
+  const ex = [(X[0] - O[0]) / bw, (X[1] - O[1]) / bw], ey = [(Y[0] - O[0]) / bh, (Y[1] - O[1]) / bh];
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(shot || gl, 0, 0, W, H); overlay();   // the tiles' picture when the frame is drawn in tiles
+  // what the flat looks like where the words go: its colours along the blade (a third of the way up, clear of a saw's line of light)
+  const tone = [...Array(9)].map((_, i) => {
+    const [x, y] = px(BOX[0] + (BOX[1] - BOX[0]) * (i + 0.5) / 9, BOX[2] + (BOX[3] - BOX[2]) * 0.3);
+    return g.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+  });
+  const lum = tone.reduce((s, d) => s + 0.3 * d[0] + 0.6 * d[1] + 0.1 * d[2], 0) / tone.length;
+  const how = COVER === "white" || COVER === "etched" ? COVER : lum < 105 ? "white" : "etched";   // dark steel (a cleaver's forged top) takes light letters
+
+  g.setTransform(ex[0], ex[1], -ey[0], -ey[1], O[0], O[1]);   // x along the blade, y down from the box's lower edge
+  const fonts = F => [`900 ${F}px Poppins, sans-serif`, `800 ${F * 0.5}px Poppins, sans-serif`];
+  const width = F => { const f = fonts(F); g.font = f[0]; const wn = g.measureText(n).width; g.font = f[1]; return [wn, F * 0.16, g.measureText("PIECES").width]; };
+  let F = bh * 0.80 / 0.70;                             // the digits' height fills four fifths of the flat
+  F *= Math.min(1, bw * 0.95 / width(F).reduce((s, v) => s + v));
+  const [wn, gap] = width(F), all = width(F).reduce((s, v) => s + v), f = fonts(F);
+  const x0 = (bw - all) / 2, y = -(bh - F * 0.70) / 2;
+  if (saw) {                                            // the bar's line of light stops short of the words: steel over it, in the bar's own tones
+    const pad = F * 0.22, G = g.createLinearGradient(0, 0, bw, 0);
+    tone.forEach((d, i) => G.addColorStop((i + 0.5) / 9, `rgb(${d[0]},${d[1]},${d[2]})`));
+    g.fillStyle = G; g.beginPath();
+    g.roundRect(x0 - pad, -(0.0245 - BOX[2]) * U, all + pad * 2, (0.0245 - 0.0187) * U, 14); g.fill();
+  }
+  const put = (dx, dy, cn, cl) => {
+    g.textAlign = "left"; g.textBaseline = "alphabetic";
+    g.font = f[0]; g.fillStyle = cn; g.fillText(n, x0 + dx, y + dy);
+    g.font = f[1]; g.fillStyle = cl; g.fillText("PIECES", x0 + wn + gap + dx, y + dy);
+  };
+  if (how === "white") {                                // light letters, a dark rim under them
+    put(F * 0.012, F * 0.02, "rgba(0,0,0,0.6)", "rgba(0,0,0,0.6)");
+    put(0, 0, "#f6f1e6", "#ff5446");
+  } else {                                              // etched into the steel: dark, with the light catching its lower rim
+    put(F * 0.012, F * 0.016, "rgba(255,255,255,0.55)", "rgba(255,255,255,0.45)");
+    put(0, 0, "rgba(18,26,28,0.9)", "#d3241b");
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  preview.getContext("2d").drawImage(out, 0, 0, preview.width, preview.height);
+  const jpg = await new Promise(r => out.toBlob(r, "image/jpeg", 0.95));
+  const saved = [(await post(`/rec/still?name=${encodeURIComponent(`${NAME}-cover`)}`, jpg)).path];
+  return saved;
 }
 
 function wav(b) {                                      // 16-bit PCM WAV of an AudioBuffer

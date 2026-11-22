@@ -60,11 +60,11 @@ def tg(method, **params):
     return None
 
 
-def tg_file(method, field, path, **params):
+def tg_file(method, field, path, ctype="video/mp4", **params):
     b = uuid.uuid4().hex
     parts = [f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{json.dumps(v) if isinstance(v, (bool, dict)) else v}\r\n'.encode()
              for k, v in params.items() if v is not None]
-    parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\nContent-Type: video/mp4\r\n\r\n'.encode())
+    parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{path.name}"\r\nContent-Type: {ctype}\r\n\r\n'.encode())
     body = b"".join(parts) + path.read_bytes() + f"\r\n--{b}--\r\n".encode()
     req = urllib.request.Request(f"{API}/bot{TOKEN}/{method}", body, {"Content-Type": f"multipart/form-data; boundary={b}"})
     try:
@@ -130,12 +130,13 @@ FIXED = {                                       # looks that are not lists in th
     "cutsound": {"auto": [], "knife": [], "glass": []},
     "edit": {"normal": [], "loop": ["seamless", "لوپ"]},
     "sawvoice": {"classic": ["دوزمانه", "twostroke"], "deep": ["بم"]},
+    "cover": {"on": ["کاور", "cover"], "off": ["بی‌کاور", "nocover"]},
     "format": {"normal": [], "vs": ["1vsn", "وی‌اس"]},
 }
-ORDER = ["fruit", "style", "camera", "speed", "knife", "sawvoice", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit", "format"]
+ORDER = ["fruit", "style", "camera", "speed", "knife", "sawvoice", "cover", "backdrop", "board", "theme", "material", "size", "quality", "notes", "cutsound", "edit", "format"]
 DEFAULTS = dict(fruit="orange", style="burst", camera="front", speed="normal", knife="chef", backdrop="teal", board="walnut",
                 material="real", size="m", quality="lite", video="720", notes="piano", cutsound="auto", edit="normal", format="normal", autocap="on",
-                mode="manual", sawvoice="classic")  # fits 1 GB of memory
+                mode="manual", sawvoice="classic", cover="on")  # fits 1 GB of memory
 CUTS = [10, 20, 30]
 MAX_CUT, MAX_PARTS = 500, 6                     # cuts in one segment (tested up to 500), segments in a video
 options = {"fruit": {"orange": {"en": "Orange", "fa": "پرتقال"}}, "backdrop": {}, "board": {}, "knife": {}, "theme": {}}
@@ -241,9 +242,10 @@ def options_text():
 CATS = [("mode", "🎲 حالت"), ("fruit", "🍋 میوه"), ("style", "✂️ برش"), ("cuts", "🔢 تعداد"), ("camera", "🎥 دوربین"), ("speed", "⚡ سرعت"),
         ("edit", "🎬 ادیت"), ("notes", "🎵 نت"), ("cutsound", "🔊 صدا"), ("knife", "🔪 چاقو"), ("sawvoice", "🪚 موتور اره"), ("board", "🪵 تخته"),
         ("backdrop", "🖼 پس‌زمینه"), ("theme", "🎨 تم"), ("material", "💎 جنس"), ("size", "📏 میوه"),
-        ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب"), ("autocap", "📝 کپشن")]
+        ("video", "📐 ویدیو"), ("quality", "✨ کیفیت"), ("format", "🎞 قالب"), ("autocap", "📝 کپشن"), ("cover", "🖼 کاور")]
 TITLES = {"mode": "حالت ساخت" + "\nدستی: ▶️ همین تنظیمات منو را می‌سازد." + "\nرندوم ۱: هر ▶️ یک ترکیب تازه با یک بسته برش (مثلاً ۳۰)." + "\nرندوم ۲: هر ▶️ یک ترکیب تازه با دو بسته (مثلاً ۱۰ و ۱۰۰)." + "\nرندوم‌ها همیشه 1080 و کیفیت کامل‌اند؛ ترکیبی که ساخته می‌شود در همین منو نشان داده می‌شود.",
           "sawvoice": "صدای موتور اره‌برقی (فقط وقتی چاقو اره‌برقی است)",
+          "cover": "کاور پست" + "\nبعد از ویدیو، یک عکس برای کاور: کپه‌ی آخرین برش روی تخته و چاقو بزرگ جلوی دوربین با تعداد قطعه‌ها روی تیغه." + "\nآخرین بخش یک بار دیگر ساخته می‌شود، پس کمی وقت می‌برد.",
           "autocap": "کپشن خودکار" + "\nبعد از هر ویدیو، کپشن اینستاگرام و تیتر، توضیح و تگ‌های یوتیوب از روی همان تنظیمات نوشته می‌شود.",
           "style": "نوع برش" + "\nرگبار: سبک ویدیوهای Blender؛ میوه در هوا، چاقوها دسته‌دسته از آن رد می‌شوند و به قطعه‌های واقعی می‌ریزد، با صداهای همان ویدیوها.",
           "cuts": "تعداد برش هر بخش (۱ تا ۵۰۰، تا ۶ بخش)\nیک سری آماده را بزن، یا با «ساختن دلخواه» عددها را دانه‌دانه بچین، یا «تایپ عدد».",
@@ -267,6 +269,7 @@ LABELS = {
     "format": {"normal": "معمولی", "vs": "1 VS N"},
     "autocap": {"on": "خودکار", "off": "خاموش"},
     "mode": {"manual": "دستی", "r1": "رندوم ۱", "r2": "رندوم ۲"},
+    "cover": {"on": "بساز", "off": "نه"},
     "sawvoice": {"classic": "دوزمانه", "deep": "بم"},
 }
 CUT_PRESETS = ["10,20,30", "5,15,30", "1,10,50", "1,10,100", "10,50,100", "1,5,10,50,100", "1,10,100,200", "1,50,100,200",
@@ -590,6 +593,10 @@ def make_video(browser, o, cuts, on_status, name, **extra):
         page.close()
     if m:
         log(f"part {cuts}: memory peak {peak} MB" + (f" of {m[1]} MB" if m[1] else ""))
+    if extra.get("cover"):                      # a cover: the still's path
+        if not done.get("path"):
+            raise RuntimeError(done.get("error") or "the cover failed")
+        return done["path"]
     if not done.get("encode"):
         raise RuntimeError(done.get("error") or "the recording failed")
     return done["encode"]
@@ -682,6 +689,18 @@ def worker():
                 tg("deleteMessage", chat_id=chat, message_id=note_id)
             if o.get("autocap", "on") == "on":
                 start_caption(chat, *video_facts(o, cuts), reply_to=(sent or {}).get("message_id"), auto=True)
+            if o.get("cover", "on") == "on":    # the post's cover: the last count once more, posed
+                cnote = say(chat, "🖼 کاور در حال ساختن است…", (sent or {}).get("message_id"))
+                try:
+                    still = Path(with_browser(pw, lambda b: make_video(b, o, cuts[-1:], lambda s: None, name, cover=1)))
+                    files.append(still)
+                    tg_file("sendDocument", "document", still, ctype="image/jpeg", chat_id=chat,
+                            reply_to_message_id=(sent or {}).get("message_id"), caption=f"🖼 کاور · {cuts[-1]} cuts")
+                except Exception as e:          # noqa: BLE001
+                    log("cover:", traceback.format_exc())
+                    say(chat, f"❌ کاور ساخته نشد: {str(e)[:300]}", (sent or {}).get("message_id"))
+                if cnote:
+                    tg("deleteMessage", chat_id=chat, message_id=cnote["message_id"])
         except Exception as e:                  # noqa: BLE001
             log(traceback.format_exc())
             hint = "\n\nحافظه‌ی سرور کم آمد: اندازه‌ی ویدیو را 720 و کیفیت را سبک بگذار، یا حافظه‌ی سرور را بیشتر کن." if "out of memory" in str(e) else ""
